@@ -1,0 +1,292 @@
+/* MYRACLE shared styles. Red (--pen) means "your teacher said this" and is used for nothing else. */
+:root {
+	--paper: #f6f3ec;
+	--surface: #ffffff;
+	--sunken: #efebe2;
+	--ink: #1b2440;
+	--ink-2: #4b5571;
+	--ink-3: #7a8199;
+	--line: #e2dccf;
+	--brand: #1f3a6e;
+	--brand-2: #2c4f8f;
+	--brand-soft: #e6ecf6;
+	--gold: #c88a12;
+	--gold-soft: #fdf3dc;
+	--pen: #c0392b;
+	--ok: #2e7d4f;
+	--ok-soft: #e3f2e8;
+	--partly: #c88a12;
+	--kept: #6b7a99;
+
+	--radius: 14px;
+	--radius-sm: 10px;
+	--shadow: 0 1px 2px rgb(27 36 64 / 0.06), 0 4px 16px rgb(27 36 64 / 0.06);
+	--font: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--hand: 'Caveat', 'Bradley Hand', 'Segoe Print', cursive;
+	--ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--font);
+	font-size: 16px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+	line-height: 1.2;
+	margin: 0;
+	text-wrap: balance;
+}
+
+h1 {
+	font-size: 1.6rem;
+}
+
+h2 {
+	font-size: 1.15rem;
+}
+
+h3 {
+	font-size: 1rem;
+}
+
+p {
+	margin: 0;
+}
+
+a {
+	color: var(--brand-2);
+}
+
+/* ---------- buttons ---------- */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	min-height: 48px;
+	padding: 0.7rem 1.25rem;
+	border-radius: 999px;
+	border: 1.5px solid transparent;
+	font: inherit;
+	font-weight: 700;
+	text-decoration: none;
+	cursor: pointer;
+	transition:
+		transform 160ms var(--ease),
+		background-color 160ms var(--ease),
+		box-shadow 160ms var(--ease);
+	-webkit-tap-highlight-color: transparent;
+}
+
+.btn:active:not(:disabled) {
+	transform: scale(0.97);
+}
+
+.btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.btn-primary {
+	background: var(--brand);
+	color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+	background: var(--brand-2);
+}
+
+.btn-ghost {
+	background: var(--surface);
+	color: var(--brand);
+	border-color: var(--line);
+}
+
+.btn-ghost:hover:not(:disabled) {
+	border-color: var(--brand-2);
+}
+
+.btn-small {
+	min-height: 36px;
+	padding: 0.35rem 0.9rem;
+	font-size: 0.9rem;
+	white-space: nowrap;
+}
+
+.btn-block {
+	width: 100%;
+}
+
+:focus-visible {
+	outline: 3px solid var(--gold);
+	outline-offset: 2px;
+}
+
+/* ---------- surfaces ---------- */
+.card {
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	padding: 1.1rem;
+	box-shadow: var(--shadow);
+}
+
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+
+.muted {
+	color: var(--ink-2);
+}
+
+.small {
+	font-size: 0.875rem;
+}
+
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.15rem 0.6rem;
+	border-radius: 999px;
+	background: var(--sunken);
+	color: var(--ink-2);
+	font-size: 0.8rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.pill-ok {
+	background: var(--ok-soft);
+	color: var(--ok);
+}
+
+.pill-gold {
+	background: var(--gold-soft);
+	color: #8a5d00;
+}
+
+.pill-brand {
+	background: var(--brand-soft);
+	color: var(--brand);
+}
+
+/* teacher's red pen */
+.pen {
+	font-family: var(--hand);
+	color: var(--pen);
+	font-size: 1.45rem;
+	line-height: 1.15;
+	font-weight: 600;
+}
+
+/* goal ribbon */
+.goal {
+	background: var(--gold-soft);
+	border: 1px solid #f0d9a4;
+	border-radius: var(--radius-sm);
+	padding: 0.75rem 0.9rem;
+}
+
+.goal-label {
+	font-size: 0.78rem;
+	font-weight: 700;
+	color: #8a5d00;
+}
+
+/* ---------- forms ---------- */
+label.field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	font-weight: 700;
+}
+
+input[type='text'],
+input[type='date'],
+input[type='number'],
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+	background: var(--surface);
+	border: 1.5px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: 0.65rem 0.75rem;
+	width: 100%;
+	font-weight: 400;
+}
+
+textarea {
+	resize: vertical;
+	min-height: 6rem;
+	line-height: 1.5;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+	outline: none;
+	border-color: var(--brand-2);
+	box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.choice {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.65rem;
+	padding: 0.75rem 0.85rem;
+	border: 1.5px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	cursor: pointer;
+	font-weight: 400;
+	transition:
+		border-color 160ms var(--ease),
+		background-color 160ms var(--ease);
+}
+
+.choice:has(input:checked) {
+	border-color: var(--brand);
+	background: var(--brand-soft);
+}
+
+.choice input {
+	margin-top: 0.25rem;
+	accent-color: var(--brand);
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+	}
+}
