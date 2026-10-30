@@ -4,12 +4,12 @@ Clickable prototype for PSC XI. SvelteKit 3 + TypeScript, fake data only (no dat
 
 ## First time on a new computer
 
-The setup script checks for Node.js (22.17 or newer), installs Node.js 24 LTS if it is missing or too old, then installs the project's packages.
+The setup script checks for Node.js (22.17 or newer), installs Node.js 24 LTS if it is missing or too old, then installs the project's packages. Node.js is installed for your user only, so **no admin password or permission is needed**.
 
-- **Mac:** open Terminal in this folder and run `bash setup.sh`. macOS asks for your password only if it needs to install Node.js.
-- **Windows:** double-click `setup.cmd`. Click Yes if Windows asks for permission to install Node.js.
+- **Mac:** open Terminal in this folder and run `bash setup.sh`. Node.js goes in `~/.myracle/node` and is added to `~/.zprofile`.
+- **Windows:** double-click `setup.cmd`. Node.js goes in `%LOCALAPPDATA%\myracle\node` and is added to your user PATH.
 
-At the end it offers to start the app. Run it again any time packages change (after a `git pull` that touches `package.json`).
+At the end it offers to start the app. After a fresh install, open a new terminal window (and restart VS Code once) so it finds Node.js. If your computer already had an older Node.js, the script tells you how to update or remove it. Run it again any time packages change (after a `git pull` that touches `package.json`).
 
 ## Run it
 

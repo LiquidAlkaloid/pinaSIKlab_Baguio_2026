@@ -1,5 +1,7 @@
 # MYRACLE setup for Windows: checks for Node.js, installs it if it is missing or too old,
 # then installs the project's packages. Easiest way to run it: double-click setup.cmd.
+# Node.js is installed for this user only, in %LOCALAPPDATA%\myracle\node, so no admin
+# rights or permission prompt are needed.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads much slower
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -7,10 +9,12 @@ $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads mu
 $NeedMajor = 22                  # @sveltejs/kit 3 needs Node 22.17 or newer
 $NeedMinor = 17
 $NodeDist = 'https://nodejs.org/dist/latest-v24.x'   # the Node.js LTS line we install
+$NodeHome = Join-Path $env:LOCALAPPDATA 'myracle\node'
 
 Set-Location $PSScriptRoot
 
 function Say($text) { Write-Host "`n$text" -ForegroundColor Cyan }
+function Warn($text) { Write-Host $text -ForegroundColor Yellow }
 function Fail($text) { Write-Host "`n$text" -ForegroundColor Red; exit 1 }
 
 function Get-NodeVersion {
@@ -23,29 +27,32 @@ function Test-NodeOk {
     return $v -and ($v.Major -gt $NeedMajor -or ($v.Major -eq $NeedMajor -and $v.Minor -ge $NeedMinor))
 }
 
-$NodeDir = Join-Path $env:ProgramFiles 'nodejs'   # where both winget and the .msi put Node.js
-
-function Get-SavedPath {
-    [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-}
-
-# Pick up PATH changes from the installer without opening a new window. The new Node.js goes
-# first, so an older one (for example from nvm-windows) cannot hide it in this window.
-function Update-Path {
-    $env:Path = "$NodeDir;" + (Get-SavedPath)
-}
-
-# The node.exe a NEW window would find first, from the saved PATH.
+# The node.exe a NEW window would find first: Windows reads the machine PATH, then the user PATH.
 function Get-NodeInNewWindow {
-    foreach ($dir in (Get-SavedPath) -split ';') {
+    $saved = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+    foreach ($dir in $saved -split ';') {
         if ($dir -and (Test-Path (Join-Path $dir 'node.exe'))) { return (Join-Path $dir 'node.exe') }
     }
     return $null
 }
 
-function Install-NodeWithMsi {
+# Put Node.js on this user's PATH. Writing the registry value directly keeps entries like
+# %USERPROFILE%\... working; touching a dummy variable afterwards tells Windows to reload it.
+function Add-ToUserPath($dir) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    $raw = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    if (($raw -split ';') -notcontains $dir) {
+        $key.SetValue('Path', ("$dir;$raw").TrimEnd(';'), 'ExpandString')
+    }
+    $key.Close()
+    [Environment]::SetEnvironmentVariable('MYRACLE_SETUP', '1', 'User')
+    [Environment]::SetEnvironmentVariable('MYRACLE_SETUP', $null, 'User')
+}
+
+function Install-NodeForUser {
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
     $tmp = Join-Path $env:TEMP 'myracle-node'
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
     $sumsFile = Join-Path $tmp 'SHASUMS256.txt'
@@ -54,27 +61,32 @@ function Install-NodeWithMsi {
     } catch {
         Fail 'Could not reach nodejs.org. Check your internet connection and try again.'
     }
-    $line = Get-Content $sumsFile | Where-Object { $_ -match "node-v[\d.]+-$arch\.msi$" } | Select-Object -First 1
-    if (-not $line) { Fail 'Could not find the Node.js installer on nodejs.org.' }
-    $hash, $msi = $line.Trim() -split '\s+'
-    $file = Join-Path $tmp $msi
+    $line = Get-Content $sumsFile | Where-Object { $_ -match "node-v[\d.]+-win-$arch\.zip$" } | Select-Object -First 1
+    if (-not $line) { Fail 'Could not find Node.js for Windows on nodejs.org.' }
+    $hash, $zip = $line.Trim() -split '\s+'
+    $file = Join-Path $tmp $zip
 
-    Say "Downloading $msi ..."
-    Invoke-WebRequest "$NodeDist/$msi" -OutFile $file -UseBasicParsing
+    Say "Downloading $zip ..."
+    Invoke-WebRequest "$NodeDist/$zip" -OutFile $file -UseBasicParsing
 
     # Make sure the download is exactly the file nodejs.org published.
-    if ((Get-FileHash $file -Algorithm SHA256).Hash -ne $hash.ToUpper()) {
+    if ((Get-FileHash $file -Algorithm SHA256).Hash -ne $hash) {
         Fail 'The download did not match its checksum. Run the script again.'
     }
 
-    Say 'Installing Node.js. Windows will ask for permission: click Yes.'
+    Say "Installing Node.js in $NodeHome (just for you, no admin needed) ..."
+    Expand-Archive $file -DestinationPath $tmp -Force
+    New-Item -ItemType Directory -Force -Path (Split-Path $NodeHome) | Out-Null
     try {
-        $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$file`"", '/passive', '/norestart' -Verb RunAs -Wait -PassThru
+        if (Test-Path $NodeHome) { Remove-Item $NodeHome -Recurse -Force }
+        Move-Item (Join-Path $tmp ($zip -replace '\.zip$', '')) $NodeHome
     } catch {
-        Fail 'Node.js was not installed because Windows permission was not given. Run setup.cmd again and click Yes. On a school or work PC, ask IT to install Node.js 24 LTS.'
+        Fail 'Could not replace the old Node.js. Close any window running MYRACLE (npm run dev), then run setup.cmd again.'
     }
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Fail "The Node.js installer stopped with code $($p.ExitCode)." }
+
+    Add-ToUserPath $NodeHome
+    $env:Path = "$NodeHome;$env:Path"
 }
 
 Say 'Checking for Node.js ...'
@@ -85,26 +97,20 @@ if (Test-NodeOk) {
     if ($old) { Write-Host "Found Node.js $old, but MYRACLE needs $NeedMajor.$NeedMinor or newer." }
     else { Write-Host 'Node.js is not installed.' }
 
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Say 'Installing Node.js LTS with winget ...'
-        & winget install --id OpenJS.NodeJS.LTS --exact --silent --accept-source-agreements --accept-package-agreements
-        Update-Path
-    }
+    Install-NodeForUser
     if (-not (Test-NodeOk)) {
-        Install-NodeWithMsi
-        Update-Path
-    }
-    if (-not (Test-NodeOk)) {
-        Fail 'Node.js was installed but this window cannot see it yet. Close this window and run setup.cmd again.'
+        Fail "Node.js was installed but does not run. Your PC may block programs in $NodeHome; ask IT to install Node.js 24 LTS."
     }
     Write-Host "Installed Node.js $(& node -v)."
 
-    # An older Node.js earlier on the PATH would still win in new windows, and `npm run dev` would fail.
+    # A Node.js on the machine PATH comes before the user PATH, so an older one would still
+    # win in new windows and `npm run dev` would fail.
     $first = Get-NodeInNewWindow
-    if ($first -and ($first -ne (Join-Path $NodeDir 'node.exe'))) {
-        Write-Host "`nHeads up: new windows will still use the older Node.js at $first." -ForegroundColor Yellow
-        Write-Host 'If it came from nvm-windows, run: nvm install 24 then nvm use 24. Otherwise uninstall it in Settings > Apps.' -ForegroundColor Yellow
-        Write-Host 'This window already uses the new one.' -ForegroundColor Yellow
+    if ($first -and ($first -ne (Join-Path $NodeHome 'node.exe'))) {
+        Write-Host ''
+        Warn "Heads up: new windows will still use the older Node.js at $first."
+        Warn 'If it came from nvm-windows, run: nvm install 24 then nvm use 24. Otherwise uninstall it in Settings > Apps.'
+        Warn 'This window already uses the new one.'
     }
 }
 
@@ -114,7 +120,8 @@ Say "Installing the project's packages ..."
 & npm.cmd ci
 if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Read the messages above, or ask in the team chat.' }
 
-Say 'All set. To start MYRACLE any time, open a terminal in this folder and run:  npm run dev'
+Say 'All set. To start MYRACLE any time, open a NEW terminal in this folder and run:  npm run dev'
+Write-Host '(If you use VS Code, restart it once so its terminal finds Node.js.)'
 
 $answer = Read-Host 'Start it now? [Y/n]'
 if ($answer -eq '' -or $answer -match '^[Yy]') { & npm.cmd run dev -- --open }
