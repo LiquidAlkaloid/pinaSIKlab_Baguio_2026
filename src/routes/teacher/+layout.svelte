@@ -2,8 +2,22 @@
 	import { page } from '$app/state';
 	import Logo from '#lib/components/Logo.svelte';
 	import { teacher } from '#lib/data.ts';
+	import { loadTeacher, saved, saveTeacher } from '#lib/teacher.svelte.ts';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
+	let loaded = $state(false);
+
+	onMount(() => {
+		loadTeacher();
+		loaded = true;
+	});
+
+	// Save the bank, comments and decisions whenever they change.
+	$effect(() => {
+		const json = JSON.stringify(saved);
+		if (loaded) saveTeacher(json);
+	});
 </script>
 
 <div class="desk">
@@ -12,6 +26,7 @@
 		<nav>
 			<a href="/teacher" aria-current={page.url.pathname === '/teacher' ? 'page' : undefined}>Teacher home</a>
 			<a href="/teacher/new" aria-current={page.url.pathname === '/teacher/new' ? 'page' : undefined}>New assignment</a>
+			<a href="/teacher/bank" aria-current={page.url.pathname === '/teacher/bank' ? 'page' : undefined}>Comment bank</a>
 		</nav>
 		<div class="who">
 			<span class="small muted">{teacher.full_name}</span>

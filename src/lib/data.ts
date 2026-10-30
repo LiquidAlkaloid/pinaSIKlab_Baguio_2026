@@ -323,6 +323,40 @@ export function feedbackRound(round: number): FeedbackItem[] {
 	return pool.map((c, i) => ({ id: `fi-r${round}-${i + 1}`, number: i + 1, author_id: teacher.id, ...c }));
 }
 
+/** A row of the comment bank (#5): a reusable comment, linked to a rubric criterion and tagged with an error type. */
+export interface CommentBankEntry {
+	id: string;
+	owner_id: string;
+	criterion_id: string | null;
+	error_type_id: string | null;
+	body: string;
+	/** How often it was inserted. Sorts the bank so the most used comes first. */
+	use_count: number;
+}
+
+const bankEntry = (n: number, criterion_id: string, error_type_id: string, body: string, use_count: number): CommentBankEntry => ({
+	id: `90000000-0000-0000-0000-00000000000${n}`,
+	owner_id: teacher.id,
+	criterion_id,
+	error_type_id,
+	body,
+	use_count
+});
+
+export const commentBank: CommentBankEntry[] = [
+	bankEntry(1, 'rc-position', 'et-structure', 'What is your position? Say it in one sentence.', 41),
+	bankEntry(2, 'rc-position', 'et-evidence', 'Says who? Point to a paragraph (¶) of the article.', 37),
+	bankEntry(3, 'rc-position', 'et-evidence', 'Good claim. Now add one example that proves it.', 22),
+	bankEntry(4, 'rc-position', 'et-structure', 'This paragraph has two ideas. Split it.', 15),
+	bankEntry(5, 'rc-clarity', 'et-grammar', '“should have”, not “should of”.', 29),
+	bankEntry(6, 'rc-clarity', 'et-grammar', 'Run-on sentence. Break it after the first idea.', 18),
+	bankEntry(7, 'rc-clarity', 'et-clarity', 'Be specific: who exactly? Which office?', 24),
+	bankEntry(8, 'rc-article', 'et-citation', 'Cite the paragraph: (¶2).', 33),
+	bankEntry(9, 'rc-article', 'et-citation', 'This is the article’s idea. Show that it is theirs, not yours.', 12)
+];
+
+export const criterionName = (id: string | null) => rubricCriteria.find((c) => c.id === id)?.name ?? '';
+
 /** Bea's grade (grades) and rubric scores (criterion_scores). The demo releases it when she hands in her final. */
 export const grade: Grade = { output_score: 84, process_score: 92, final_score: 86, released_at: null };
 
@@ -494,6 +528,59 @@ export const classmates: Classmate[] = [
 
 /** explain_back_checks: students picked at random to explain one change live in class. */
 export const explainBack = ['Andrea Cruz', 'Kevin Tan', 'Mika Fernandez', 'Joanna Lim', 'Lea Villanueva', 'Paolo Ramos'];
+
+// ---------- the teacher's other classes and assignments ----------
+// Only the demo assignment above has student-by-student rows. The others carry the
+// numbers the class and assignment picker needs.
+
+export const classes: SchoolClass[] = [
+	schoolClass,
+	{ id: '30000000-0000-0000-0000-000000000002', teacher_id: teacher.id, name: 'Purposive Communication · BSIT 1-A', program_id: program.id, school_year: '2026-2027', term: '1st semester' },
+	{ id: '30000000-0000-0000-0000-000000000003', teacher_id: teacher.id, name: 'Technical Writing · BSIT 3-C', program_id: program.id, school_year: '2026-2027', term: '1st semester' }
+];
+
+/** Enrolled students per class (a count over enrollments). */
+export const classSize: Record<string, number> = {
+	[classes[0].id]: classmates.length + 1,
+	[classes[1].id]: 32,
+	[classes[2].id]: 28
+};
+
+const otherAssignment = (n: number, class_id: string, title: string, due: string, source_text_id: string | null = null): Assignment => ({
+	id: `60000000-0000-0000-0000-00000000000${n}`,
+	class_id,
+	title,
+	instructions: null,
+	rubric_id: RUBRIC,
+	source_text_id,
+	process_weight_pct: 25,
+	due_at: `${due}T23:59:00${PH}`
+});
+
+export const assignments: Assignment[] = [
+	assignment,
+	otherAssignment(2, classes[0].id, 'Summary: Ibaloi oral histories', '2026-09-25', sourceText.id),
+	otherAssignment(3, classes[0].id, 'Reflection paper: my reading habits', '2026-10-16'),
+	otherAssignment(4, classes[1].id, 'Position paper: public transport in Baguio', '2026-11-14', sourceText.id),
+	otherAssignment(5, classes[1].id, 'Summary: Ibaloi oral histories', '2026-09-26', sourceText.id),
+	otherAssignment(6, classes[2].id, 'User manual: barangay clinic booking app', '2026-11-20'),
+	otherAssignment(7, classes[2].id, 'Incident report: lab network outage', '2026-10-23')
+];
+
+export type AssignmentStatus = 'open' | 'grading' | 'done';
+
+/** Picker numbers for assignments without demo rows: students past each step, in step order. */
+export const assignmentProgress: Record<string, { status: AssignmentStatus; step_done: number[] }> = {
+	[assignments[1].id]: { status: 'done', step_done: [10, 10, 10, 10, 10] },
+	[assignments[2].id]: { status: 'done', step_done: [10, 10, 10, 9] },
+	[assignments[3].id]: { status: 'open', step_done: [27, 18, 6, 0, 0] },
+	[assignments[4].id]: { status: 'done', step_done: [32, 32, 31, 31, 30] },
+	[assignments[5].id]: { status: 'open', step_done: [20, 4, 0, 0] },
+	[assignments[6].id]: { status: 'grading', step_done: [28, 27, 27, 0] }
+};
+
+/** The student steps of an assignment without demo rows (default stages): Read only when there is a text to read. */
+export const assignmentSteps = (a: Assignment) => stepsFor(defaultStages).filter((s) => s.key !== 'read' || a.source_text_id);
 
 /** Demo only: text for the "fill in a sample draft" button on each hand-in. */
 export const sampleDrafts: Record<StageKind, string> = {

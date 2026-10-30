@@ -4,8 +4,10 @@
 	// The teacher sets how many times students revise. Every revision except the last gets
 	// comments; the last revision is the final. A process share of 0 to 30 percent is allowed
 	// by the schema; this screen offers 20 to 30.
-	import { AI_SCALE, MAX_REVISIONS, assignment, schoolClass, sourceParagraphs, sourceText, type Stage, type StageKind } from '#lib/data.ts';
+	// For another class, the assignment is added to that class's list on Teacher home instead.
+	import { AI_SCALE, MAX_REVISIONS, assignment, classes, schoolClass, sourceParagraphs, sourceText, type Stage, type StageKind } from '#lib/data.ts';
 	import { course, setCourse } from '#lib/state.svelte.ts';
+	import { created, desk } from '#lib/teacher.svelte.ts';
 
 	interface DraftStage {
 		id: number;
@@ -41,6 +43,9 @@
 	let weight = $state(course.process_weight_pct);
 	let mirror = $state(true);
 	let given = $state(false);
+	let classId = $state(desk.class_id);
+	const chosenClass = $derived(classes.find((c) => c.id === classId) ?? schoolClass);
+	const isDemoClass = $derived(classId === schoolClass.id);
 
 	const revisions = $derived(list.length - 1);
 
@@ -58,6 +63,25 @@
 	}
 
 	function give() {
+		desk.class_id = classId;
+		if (!isDemoClass) {
+			const id = crypto.randomUUID();
+			const final = list.at(-1)?.due;
+			created.unshift({
+				id,
+				class_id: classId,
+				title: title.trim(),
+				instructions: null,
+				rubric_id: assignment.rubric_id,
+				source_text_id: withSource ? crypto.randomUUID() : null,
+				process_weight_pct: weight,
+				due_at: final ? `${final}T23:59:00+08:00` : null
+			});
+			desk.assignment_id = id;
+			given = true;
+			return;
+		}
+		desk.assignment_id = assignment.id;
 		const stages: Stage[] = list.map((s, i) => ({
 			id: `stage-${i + 1}`,
 			assignment_id: assignment.id,
@@ -79,11 +103,17 @@
 
 <div class="wrap stack">
 	<div>
-		<p class="small muted">{schoolClass.name}</p>
+		<p class="small muted">{chosenClass.name}</p>
 		<h1>New assignment</h1>
 	</div>
 
 	<section class="card stack">
+		<label class="field">
+			Class
+			<select bind:value={classId} disabled={given}>
+				{#each classes as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+			</select>
+		</label>
 		<label class="field">
 			Assignment title
 			<input type="text" bind:value={title} />
@@ -187,13 +217,15 @@
 
 	{#if given}
 		<div class="card done stack">
-			<span class="pill pill-ok">Given to {schoolClass.name}</span>
+			<span class="pill pill-ok">Given to {chosenClass.name}</span>
 			<p>
 				<strong>{title}</strong> is now on every student’s home screen with {studentSteps} steps and
 				{revisions} revision{revisions === 1 ? '' : 's'}.
 			</p>
-			<p class="small muted">Demo: Bea’s walkthrough starts over with the new steps. Open “Student view” to see it.</p>
-			<a class="btn btn-ghost" href="/teacher">Back to teacher home</a>
+			{#if isDemoClass}
+				<p class="small muted">Demo: Bea’s walkthrough starts over with the new steps. Open “Student view” to see it.</p>
+			{/if}
+			<a class="btn btn-ghost" href="/teacher">See it on teacher home</a>
 		</div>
 	{:else}
 		<button class="btn btn-primary btn-block" disabled={!ready} onclick={give}>Give to class</button>

@@ -47,6 +47,8 @@ On the first draft, "Sum up my draft" asks Claude (`claude-opus-5-5`, low effort
 | Comparing two drafts and labelling each change ("Comment 2" or "Your own change") | `src/lib/diff.ts`, `src/lib/components/DraftChanges.svelte` |
 | Teacher home (Educator Hub) | `src/routes/teacher/+page.svelte` |
 | New assignment (builder) | `src/routes/teacher/new/` |
+| Comment bank | `src/routes/teacher/bank/`, `src/lib/teacher.svelte.ts` |
+| Commenting on a draft with the bank | `src/routes/teacher/review/` |
 
 Imports use `#lib/...` with the file extension (for example `#lib/data.ts`). SvelteKit 3 replaced `$lib` with this.
 
@@ -81,4 +83,6 @@ Red handwriting means "your teacher said this" and is used nowhere else.
 5. **Who confirms a "fixed" comment.** The hub lets the teacher confirm fixes as well as declines, so the matrix (confirmed items only) can be exported. The schema notes say the adviser confirms fixes for thesis classes.
 6. **One revision means no `revision` stage.** The teacher sets how many times students revise, and the last revision is the final. So 1 revision is stages `first_draft` + `final`, and 3 revisions is `first_draft`, 2 × `revision`, `final`. The database allows this; only the schema's comment ("at least one revision is checked by the app") needs updating.
 7. **AI summaries need a new `draft_summaries.kind`.** The first-draft summary is now written by AI, stored as kind `ai` with `author_id` NULL. Add it to the check: `CHECK (kind IN ('student', 'changes', 'ai'))`. Revisions have no summary; their `changes` row lists what changed instead.
-8. **Not on screen yet:** comment bank (#5) and program dictionary (#6). Their tables exist; no prototype screen uses them.
+8. **Not on screen yet:** program dictionary (#6). Its table exists; no prototype screen uses it.
+9. **Comment bank (#5) and the student screens.** Teachers can save, tag and insert bank comments on the Review screen (`/teacher/review`), and those comments show in the student's details on Teacher home. The student screens still use the sample comment rounds, so a new comment is not yet something the student can answer.
+10. **Other classes and assignments.** Teacher home has a class and assignment picker. Only the demo assignment (BSIT 1-B) has student-by-student rows; the others show class progress only.
