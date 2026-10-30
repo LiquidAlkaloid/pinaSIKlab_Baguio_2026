@@ -13,6 +13,7 @@ import {
 	type PromptKey,
 	type ResolutionAction,
 	type Stage,
+	type FeedbackItem,
 	type Step,
 	type SubmissionStatus
 } from './data.ts';
@@ -70,6 +71,11 @@ export interface FeedbackResolution {
 	resolved_at: string | null;
 	confirmation: ConfirmationStatus;
 	confirmed_at: string | null;
+	/**
+	 * Set when the teacher did not accept a "kept it" reason and raised the comment again: the
+	 * feedback item it repeats, from the round before. Not in the schema yet (see README "Gaps").
+	 */
+	redo_of?: string | null;
 }
 
 /** Everything a hand-in creates: the snapshot, its AI declaration and the student's summary. */
@@ -236,7 +242,7 @@ export function draftChanges(d: Demo, stages: Stage[], k: number): DraftChange[]
 	const next = snapshotFor(d, stages[k] ?? null);
 	const after = next ? next.content_text : d.document.content;
 	if (!before || !after) return null;
-	const items = feedbackRound(k);
+	const items = itemsFor(d, k);
 	const fixes = roundOf(d, k)
 		.filter((r) => r.action === 'addressed' || r.action === 'partly_addressed')
 		.map((r) => {
@@ -247,6 +253,62 @@ export function draftChanges(d: Demo, stages: Stage[], k: number): DraftChange[]
 }
 
 export const roundOf = (d: Demo, round: number) => d.feedback_resolutions.filter((r) => r.round === round);
+
+/**
+ * The comments in a round: the teacher's comments on that draft, then any "kept it" comments from
+ * the round before that the teacher raised again (Redo). Raised-again ones carry `redo_of`.
+ */
+export function itemsFor(d: Demo, round: number): (FeedbackItem & { redo_of?: string })[] {
+	const base = feedbackRound(round);
+	const raised = roundOf(d, round)
+		.filter((r) => r.redo_of)
+		.flatMap((r, i) => {
+			const original = itemById(d, r.redo_of!);
+			return original ? [{ ...original, id: r.feedback_item_id, number: base.length + i + 1, redo_of: original.id }] : [];
+		});
+	return [...base, ...raised];
+}
+
+/** Any comment the student has, by id, including raised-again ones. */
+export function itemById(d: Demo, id: string) {
+	const row = d.feedback_resolutions.find((r) => r.feedback_item_id === id);
+	return row ? itemsFor(d, row.round).find((i) => i.id === id) : undefined;
+}
+
+/** The raised-again answer row for a comment, if the teacher asked for a redo. */
+export const redoOf = (d: Demo, itemId: string) => d.feedback_resolutions.find((r) => r.redo_of === itemId);
+
+/** Teacher did not accept a "kept it" reason: ask about the same comment again in the next revision. */
+export function redo(d: Demo, itemId: string) {
+	const r = d.feedback_resolutions.find((x) => x.feedback_item_id === itemId);
+	if (!r || redoOf(d, itemId)) return;
+	r.confirmation = 'rejected';
+	r.confirmed_at = now();
+	d.feedback_resolutions.push({
+		feedback_item_id: `${itemId}-redo`,
+		round: r.round + 1,
+		redo_of: itemId,
+		action: null,
+		decline_reason: '',
+		revised_stage_submission_id: null,
+		changed_excerpt: '',
+		resolved_at: null,
+		confirmation: 'pending',
+		confirmed_at: null
+	});
+}
+
+/** Take a redo back, as long as the student has not answered it in a handed-in draft. */
+export function undoRedo(d: Demo, itemId: string) {
+	const again = redoOf(d, itemId);
+	if (!again || again.resolved_at) return;
+	d.feedback_resolutions.splice(d.feedback_resolutions.indexOf(again), 1);
+	const r = d.feedback_resolutions.find((x) => x.feedback_item_id === itemId);
+	if (r) {
+		r.confirmation = 'pending';
+		r.confirmed_at = null;
+	}
+}
 
 function stepDone(d: Demo, step: Step) {
 	if (step.key === 'read') return !!d.reading.saved_at;

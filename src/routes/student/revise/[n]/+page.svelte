@@ -12,6 +12,7 @@
 		courseSteps,
 		demo,
 		draftChanges,
+		itemsFor,
 		resolutionReady,
 		roundOf,
 		saveDocument,
@@ -34,7 +35,10 @@
 	// The comments are on Draft k; this revision hands in Draft k + 1 (or the final).
 	const commented = $derived(snapshotFor(demo, course.stages[k - 1] ?? null));
 	const done = $derived(snapshotFor(demo, course.stages[k] ?? null));
-	const items = $derived(feedbackRound(k));
+	// Includes comments the teacher raised again after not accepting a "kept it" reason.
+	const items = $derived(itemsFor(demo, k));
+	const earlierReason = (item: { redo_of?: string }) =>
+		demo.feedback_resolutions.find((r) => r.feedback_item_id === item.redo_of)?.decline_reason ?? '';
 	const answers = $derived(roundOf(demo, k));
 	const answerFor = (id: string) => answers.find((r) => r.feedback_item_id === id)!;
 	const anchorOf = (r: FeedbackResolution) => items.find((i) => i.id === r.feedback_item_id)?.anchor_excerpt ?? null;
@@ -99,7 +103,7 @@
 					<p class="muted small">In class, this opens when your teacher releases grades. The demo skips the wait.</p>
 				{:else}
 					<p class="muted">
-						Your teacher left {feedbackRound(k + 1).length} comments on Revision {k}. Revision {k + 1} of {total}
+						Your teacher left {itemsFor(demo, k + 1).length} comments on Revision {k}. Revision {k + 1} of {total}
 						is next.
 					</p>
 					<a class="btn btn-primary btn-block" href="/student/revise/{k + 1}">See the comments</a>
@@ -125,9 +129,16 @@
 				<section class="card stack item" class:complete={resolutionReady(r, item.anchor_excerpt)}>
 					<div class="item-head">
 						<span class="num">{item.number}</span>
+						{#if item.redo_of}<span class="pill pill-gold">Raised again</span>{/if}
 						<span class="pill">{errorLabel(item.error_type_id)}</span>
-						{#if item.anchor_page}<span class="small muted">page {item.anchor_page} of {commentedOn}</span>{/if}
+						{#if item.anchor_page && !item.redo_of}<span class="small muted">page {item.anchor_page} of {commentedOn}</span>{/if}
 					</div>
+					{#if item.redo_of}
+						<div class="again small">
+							<p>Your teacher read why you kept this last time and wants you to look at it again.</p>
+							<p class="muted">Your reason last time: “{earlierReason(item)}”</p>
+						</div>
+					{/if}
 					<blockquote>“{item.anchor_excerpt}”</blockquote>
 					<p class="pen">{item.body}</p>
 
@@ -265,6 +276,14 @@
 	}
 	.part {
 		margin-top: 0.75rem;
+	}
+	.again {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		padding: 0.6rem 0.75rem;
+		background: var(--gold-soft);
+		border-radius: var(--radius-sm);
 	}
 	.hint {
 		background: var(--gold-soft);

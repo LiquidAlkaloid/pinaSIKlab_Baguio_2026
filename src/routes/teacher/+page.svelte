@@ -37,12 +37,16 @@
 		demo,
 		draftChanges,
 		formatDate,
+		itemById,
 		onTime,
+		redo,
+		redoOf,
 		snapshotFor,
 		stepNumber,
-		summaryFor
+		summaryFor,
+		undoRedo
 	} from '#lib/state.svelte.ts';
-	import { assignmentsIn, desk, pickClass, saved } from '#lib/teacher.svelte.ts';
+	import { assignmentsIn, desk, pickClass, saved, type Decision } from '#lib/teacher.svelte.ts';
 
 	interface Row extends HubRow {
 		live: boolean;
@@ -97,7 +101,7 @@
 			step: stepNumber(demo, steps),
 			// A comment only counts as answered once the next draft is handed in (resolved_at is set).
 			comments: demo.feedback_resolutions.map((r) => ({
-				item: feedbackRound(r.round).find((i) => i.id === r.feedback_item_id)!,
+				item: itemById(demo, r.feedback_item_id)!,
 				round: r.round,
 				resolution:
 					r.resolved_at && r.action
@@ -123,30 +127,63 @@
 	const done = (row: Row) => row.step > steps.length;
 
 	// The teacher's call on each answer (feedback_resolutions.confirmation): 'confirmed' = agreed or
-	// fix confirmed, 'rejected' = not accepted yet, talk to the student. Bea's are saved in her
-	// feedback_resolutions, the fake students' in the teacher store.
-	function decisionOf(row: Row, itemId: string): ConfirmationStatus {
-		if (row.live) return demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)?.confirmation ?? 'pending';
+	// fix confirmed, 'rejected' = not accepted yet, talk to the student, 'redo' = not accepted and
+	// asked again in the next revision. Bea's are saved in her feedback_resolutions (a redo adds a
+	// row to the next round), the fake students' in the teacher store.
+	// 'final' is not stored: a "kept it" answer in the final, where no revision is left, needs no
+	// Agree or Redo and counts as accepted (always the case when the teacher allows 1 revision).
+	function decisionOf(row: Row, itemId: string): Decision | 'final' {
+		const stored = storedDecision(row, itemId);
+		if (stored !== 'pending') return stored;
+		const c = row.comments.find((c) => c.item.id === itemId);
+		return c?.resolution?.action === 'declined' && inFinal(c.round) ? 'final' : 'pending';
+	}
+
+	function storedDecision(row: Row, itemId: string): Decision {
+		if (row.live) {
+			if (redoOf(demo, itemId)) return 'redo';
+			return demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)?.confirmation ?? 'pending';
+		}
 		return saved.decisions[`${row.student.id}:${itemId}`] ?? 'pending';
 	}
 
-	const isConfirmed = (row: Row, itemId: string) => decisionOf(row, itemId) === 'confirmed';
+	/** Comments from this round are answered in the final: there is no revision after it. */
+	const inFinal = (round: number) => round >= total;
 
-	function decide(row: Row, itemId: string, status: ConfirmationStatus) {
-		if (row.live) {
-			const r = demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)!;
-			r.confirmation = status;
-			r.confirmed_at = status === 'pending' ? null : new Date().toISOString();
-		} else {
+	const isConfirmed = (row: Row, itemId: string) => ['confirmed', 'final'].includes(decisionOf(row, itemId));
+
+	function decide(row: Row, itemId: string, status: Decision) {
+		if (!row.live) {
 			saved.decisions[`${row.student.id}:${itemId}`] = status;
+			return;
 		}
+		if (status === 'redo') return redo(demo, itemId);
+		if (redoOf(demo, itemId)) undoRedo(demo, itemId);
+		const r = demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)!;
+		r.confirmation = status;
+		r.confirmed_at = status === 'pending' ? null : new Date().toISOString();
 	}
+
+	/** The revision a comment from `round` would be asked again in, if the student hasn't handed it in yet. */
+	function redoStep(row: Row, round: number) {
+		const next = steps.find((s) => s.revision === round + 1);
+		return next && row.step <= next.n ? next : null;
+	}
+
+	/** A redo can be taken back until the student has answered it in a handed-in draft. */
+	const canUndo = (row: Row, itemId: string) => !row.live || !redoOf(demo, itemId)?.resolved_at;
 
 	const confirm = (row: Row, itemId: string) => decide(row, itemId, 'confirmed');
 
 	const pendingDeclines = (row: Row) =>
 		row.comments.filter((c) => c.resolution?.action === 'declined' && decisionOf(row, c.item.id) === 'pending').length;
 	const confirmedCount = (row: Row) => row.comments.filter((c) => c.resolution && isConfirmed(row, c.item.id)).length;
+
+	/** Answered comments the teacher still has to look at: fixes to confirm and reasons to check. */
+	const toConfirm = (row: Row) => row.comments.filter((c) => c.resolution && decisionOf(row, c.item.id) === 'pending');
+	/** Answered comments kept out of the matrix on purpose: talk to the student, or asked again. */
+	const heldBack = (row: Row) =>
+		row.comments.filter((c) => c.resolution && ['rejected', 'redo'].includes(decisionOf(row, c.item.id))).length;
 
 	/** Every "kept it" answer in the class, waiting ones first. */
 	const reasons = $derived(
@@ -181,11 +218,36 @@
 	function todo(row: Row): { label: string; act?: () => void } {
 		if (row.step <= 2) return { label: 'Remind' };
 		if (pendingDeclines(row) > 0) return { label: 'Check reason', act: () => openStudent(row.student.id) };
+		if (toConfirm(row).length > 0) return { label: 'Confirm changes', act: () => openStudent(row.student.id) };
 		if (done(row)) return { label: 'Done' };
 		return { label: 'On track' };
 	}
 
 	const stepName = (row: Row) => (done(row) ? 'All done' : steps[row.step - 1].name);
+
+	// ---------- filtering the student list ----------
+	type CommentState = 'open' | 'answered' | 'none';
+	/** 'none' = no comments to answer yet (still reading or on the first draft). */
+	const commentState = (row: Row): CommentState =>
+		row.step < 3 ? 'none' : answered(row) < row.comments.length ? 'open' : 'answered';
+
+	const blankFilters = () => ({ step: '', comments: '', ai: '', todo: '' });
+	let filters = $state(blankFilters());
+	const filtering = $derived(Object.values(filters).some(Boolean));
+
+	const shownRows = $derived(
+		rows.filter(
+			(row) =>
+				(!filters.step || String(done(row) ? 'done' : row.step) === filters.step) &&
+				(!filters.comments || commentState(row) === filters.comments) &&
+				(!filters.ai || String(row.level_used ?? 'none') === filters.ai) &&
+				(!filters.todo || todo(row).label === filters.todo)
+		)
+	);
+
+	const TODOS = ['Remind', 'Check reason', 'Confirm changes', 'On track', 'Done'];
+	/** How many students a filter option would show, ignoring the other filters. */
+	const countWhere = (test: (row: Row) => boolean) => rows.filter(test).length;
 
 	const aiShort = (level: number | null) =>
 		level === null ? '—' : (AI_USES.find((u) => u.level === level)?.label.replace(/^I used AI to /, 'AI: ') ?? '—');
@@ -390,16 +452,41 @@
 			<span class="pill pill-ok">{c.resolution?.action === 'declined' ? 'You agreed' : 'Confirmed'}</span>
 			<button class="link small" onclick={() => decide(row, c.item.id, 'pending')}>Undo</button>
 		</span>
+	{:else if d === 'final'}
+		<span class="decided">
+			<span class="pill">Kept in the final</span>
+			<button class="link small" onclick={() => decide(row, c.item.id, 'rejected')}>Talk to student</button>
+		</span>
+		<p class="small muted">No revision is left after the final, so there is nothing to agree to or redo. It counts as answered.</p>
+	{:else if d === 'redo'}
+		<span class="decided">
+			<span class="pill pill-redo">Asked again in {steps.find((s) => s.revision === c.round + 1)?.name ?? 'the next revision'}</span>
+			{#if canUndo(row, c.item.id)}
+				<button class="link small" onclick={() => decide(row, c.item.id, 'pending')}>Undo</button>
+			{/if}
+		</span>
 	{:else if d === 'rejected'}
 		<span class="decided">
 			<span class="pill pill-gold">Talk to them in class</span>
 			<button class="link small" onclick={() => decide(row, c.item.id, 'pending')}>Undo</button>
 		</span>
 	{:else if c.resolution?.action === 'declined'}
+		{@const next = redoStep(row, c.round)}
 		<div class="reason-actions">
 			<button class="btn btn-primary btn-small" onclick={() => confirm(row, c.item.id)}>Agree</button>
+			<button
+				class="btn btn-ghost btn-small"
+				disabled={!next}
+				title={next ? `Ask about it again in ${next.name}` : 'No revision left to ask again in'}
+				onclick={() => decide(row, c.item.id, 'redo')}>Redo</button
+			>
 			<button class="btn btn-ghost btn-small" onclick={() => decide(row, c.item.id, 'rejected')}>Talk to student</button>
 		</div>
+		<p class="small muted">
+			{next
+				? `Redo asks the student about this comment again in ${next.name}.`
+				: 'Redo is not possible: there is no revision left for this student.'}
+		</p>
 	{:else}
 		<button class="btn btn-ghost btn-small" onclick={() => confirm(row, c.item.id)}>Confirm the change</button>
 	{/if}
@@ -420,6 +507,50 @@
 		</section>
 
 		<section class="card table-card">
+			<div class="filters" role="group" aria-label="Filter students">
+				<label class="filter small">
+					Step
+					<select bind:value={filters.step}>
+						<option value="">All steps</option>
+						{#each steps as s (s.key)}
+							<option value={String(s.n)}>{s.name} ({countWhere((r) => !done(r) && r.step === s.n)})</option>
+						{/each}
+						<option value="done">All done ({countWhere(done)})</option>
+					</select>
+				</label>
+				<label class="filter small">
+					Comments
+					<select bind:value={filters.comments}>
+						<option value="">All</option>
+						<option value="open">Has unanswered comments ({countWhere((r) => commentState(r) === 'open')})</option>
+						<option value="answered">All answered ({countWhere((r) => commentState(r) === 'answered')})</option>
+						<option value="none">No comments yet ({countWhere((r) => commentState(r) === 'none')})</option>
+					</select>
+				</label>
+				<label class="filter small">
+					AI they declared
+					<select bind:value={filters.ai}>
+						<option value="">All</option>
+						<option value="none">Nothing handed in yet ({countWhere((r) => r.level_used === null)})</option>
+						{#each AI_USES as u (u.level)}
+							<option value={String(u.level)}>{aiShort(u.level)} ({countWhere((r) => r.level_used === u.level)})</option>
+						{/each}
+					</select>
+				</label>
+				<label class="filter small">
+					What to do
+					<select bind:value={filters.todo}>
+						<option value="">All</option>
+						{#each TODOS as t (t)}
+							<option value={t}>{t} ({countWhere((r) => todo(r).label === t)})</option>
+						{/each}
+					</select>
+				</label>
+				<div class="filter-status small">
+					<span class="muted">Showing {shownRows.length} of {rows.length}</span>
+					{#if filtering}<button class="link" onclick={() => (filters = blankFilters())}>Clear filters</button>{/if}
+				</div>
+			</div>
 			<div class="table-scroll">
 				<table>
 					<thead>
@@ -432,7 +563,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each rows as row (row.student.id)}
+						{#each shownRows as row (row.student.id)}
 							{@const t = todo(row)}
 							<tr class:active={selectedId === row.student.id}>
 								<td>
@@ -460,6 +591,13 @@
 									{/if}
 								</td>
 							</tr>
+						{:else}
+							<tr>
+								<td colspan="5" class="muted empty-row">
+									No students match these filters.
+									<button class="link" onclick={() => (filters = blankFilters())}>Clear filters</button>
+								</td>
+							</tr>
 						{/each}
 					</tbody>
 				</table>
@@ -469,6 +607,9 @@
 
 	{#if selected}
 		{@const confirmed = confirmedCount(selected)}
+		{@const waiting = toConfirm(selected).length}
+		{@const held = heldBack(selected)}
+		{@const open = selected.comments.length - answered(selected)}
 		<aside class="card panel stack">
 			<div class="panel-head">
 				<h2>{selected.student.full_name}</h2>
@@ -511,7 +652,7 @@
 			<div class="comments-head">
 				<h3>Comments</h3>
 				<a class="btn btn-ghost btn-small" href="/teacher/review" onclick={() => (desk.student_id = selected.student.id)}>
-					Write comments
+					View work
 				</a>
 			</div>
 			<ul class="items">
@@ -520,6 +661,7 @@
 					<li>
 						<p class="pen small-pen">{c.item.body}</p>
 						<p class="small">
+							{#if 'redo_of' in c.item && c.item.redo_of}<span class="pill pill-redo">Raised again</span>{/if}
 							{#if r}<span class="pill status {r.action}">{LABEL[r.action]}</span>{:else}<span class="pill">Not answered yet</span>{/if}
 							<span class="muted">{roundLabel(c.round)}{errorLabel(c.item.error_type_id)}</span>
 						</p>
@@ -559,12 +701,20 @@
 			<h3>Most AI they declared</h3>
 			<p class="small">{aiShort(selected.level_used)}</p>
 
+			<h3>Ready for the revision matrix?</h3>
+			{#if confirmed === selected.comments.length}
+				<p class="check ok small">All {confirmed} comments are confirmed. The matrix is complete.</p>
+			{:else}
+				<ul class="check todo small">
+					{#if waiting}<li><strong>{waiting}</strong> answered {waiting === 1 ? 'comment needs' : 'comments need'} you to confirm or check the reason.</li>{/if}
+					{#if held}<li><strong>{held}</strong> marked to talk about or asked again, so left out for now.</li>{/if}
+					{#if open}<li><strong>{open}</strong> not answered by the student yet.</li>{/if}
+				</ul>
+			{/if}
 			<button class="btn btn-ghost btn-block" disabled={confirmed === 0} onclick={() => exportFor(selected)}>
-				Download revision matrix (Word)
+				{confirmed === selected.comments.length ? 'Download revision matrix (Word)' : `Download what is confirmed (${confirmed} of ${selected.comments.length})`}
 			</button>
-			<p class="small muted">
-				{confirmed} of {selected.comments.length} comments confirmed. Only confirmed comments go in the matrix.
-			</p>
+			<p class="small muted">Only confirmed comments go in the matrix.</p>
 			{#if selected.live}
 				<p class="small muted">This is Bea’s real demo data. The student sees this same report in “See how you did”.</p>
 			{/if}
@@ -755,6 +905,37 @@
 	.table-scroll {
 		overflow-x: auto;
 	}
+	.filters {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 0.6rem 0.75rem;
+		padding: 0.85rem 1rem;
+		border-bottom: 1px solid var(--line);
+	}
+	.filter {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-weight: 700;
+		color: var(--ink-2);
+		flex: 1 1 10rem;
+		min-width: 0;
+	}
+	.filter select {
+		padding: 0.45rem 0.6rem;
+		font-size: 0.875rem;
+	}
+	.filter-status {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding-bottom: 0.5rem;
+	}
+	.empty-row {
+		text-align: center;
+		padding: 1.5rem 1rem;
+	}
 	table {
 		width: 100%;
 		border-collapse: collapse;
@@ -869,6 +1050,27 @@
 	.reason-actions {
 		display: flex;
 		gap: 0.4rem;
+	}
+	.check {
+		margin: 0;
+		padding: 0.6rem 0.8rem;
+		border-radius: var(--radius-sm);
+	}
+	.check.ok {
+		background: var(--ok-soft);
+		color: var(--ok);
+		font-weight: 700;
+	}
+	.check.todo {
+		background: var(--gold-soft);
+		padding-left: 1.8rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+	.pill-redo {
+		background: #fbeceb;
+		color: var(--pen);
 	}
 	.decided {
 		display: inline-flex;

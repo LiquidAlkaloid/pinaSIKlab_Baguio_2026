@@ -11,6 +11,7 @@
 		declarationFor,
 		demo,
 		draftChanges,
+		itemsFor,
 		roundOf,
 		formatDate,
 		onTime,
@@ -40,7 +41,7 @@
 	const revisions = $derived(
 		course.stages.slice(1).map((stage, i) => {
 			const k = i + 1;
-			const items = feedbackRound(k);
+			const items = itemsFor(demo, k);
 			return {
 				stage,
 				changes: draftChanges(demo, course.stages, k),

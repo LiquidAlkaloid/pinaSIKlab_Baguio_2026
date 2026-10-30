@@ -12,14 +12,22 @@
 		sampleDrafts,
 		student
 	} from '#lib/data.ts';
-	import { course, demo, snapshotFor } from '#lib/state.svelte.ts';
+	import { course, demo, snapshotFor, summaryFor } from '#lib/state.svelte.ts';
 	import { addComment, addToBank, bankFor, desk, removeComment, saved } from '#lib/teacher.svelte.ts';
 
 	const people = [student, ...classmates.map((c) => c.student)];
 	const who = $derived(people.find((p) => p.id === desk.student_id) ?? student);
 	const isLive = $derived(who.id === student.id);
-	const liveDraft = $derived(snapshotFor(demo, course.stages[0])?.content_text ?? null);
+	const liveSnapshot = $derived(snapshotFor(demo, course.stages[0]));
+	const liveDraft = $derived(liveSnapshot?.content_text ?? null);
 	const draft = $derived(isLive && liveDraft ? liveDraft : sampleDrafts.first_draft);
+
+	// The AI summary made on the student's side when they handed in the draft (draft_summaries, kind 'ai').
+	// The fake students never handed in through the app, so they show a fixed demo summary.
+	const sampleSummary =
+		'The draft says jeepneys cause Baguio’s traffic and that the government should have fixed it, but it does not yet take a clear position.';
+	const liveSummary = $derived(summaryFor(demo, liveSnapshot)?.body ?? null);
+	const summary = $derived(isLive && liveDraft ? liveSummary : sampleSummary);
 
 	const feedbackItems = feedbackRound(1);
 	const first = feedbackItems.length + 1;
@@ -85,6 +93,15 @@
 			{#if isLive && !liveDraft}
 				<p class="small muted">Bea hasn’t handed in her first draft yet. This is the sample draft.</p>
 			{/if}
+			<div class="ai-summary">
+				<p class="ai-label small">Summed up by AI when {who.full_name.split(' ')[0]} handed it in</p>
+				{#if summary}
+					<p>{summary}</p>
+					{#if !isLive || !liveDraft}<span class="pill">Demo summary</span>{/if}
+				{:else}
+					<p class="small muted">No summary. The draft was uploaded as a file, so there was no text to sum up.</p>
+				{/if}
+			</div>
 			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 			<p class="draft" bind:this={draftEl} onmouseup={readSelection} onkeyup={readSelection}>{draft}</p>
 			<p class="small muted">Select words in the draft to point your next comment at them.</p>
@@ -227,6 +244,20 @@
 		background: #fcfbf8;
 		border: 1px solid var(--line);
 		border-radius: var(--radius-sm);
+	}
+	.ai-summary {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
+		padding: 0.75rem 0.9rem;
+		background: var(--brand-soft);
+		border-left: 4px solid var(--brand);
+		border-radius: var(--radius-sm);
+	}
+	.ai-label {
+		font-weight: 700;
+		color: var(--brand);
 	}
 	.draft::selection {
 		background: #f6d3cf;

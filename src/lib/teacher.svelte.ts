@@ -15,6 +15,9 @@ import {
 	type FeedbackItem
 } from './data.ts';
 
+/** The teacher's call on an answer: the database's confirmation, plus 'redo' = raised again next revision. */
+export type Decision = ConfirmationStatus | 'redo';
+
 export const desk = $state({ class_id: schoolClass.id, assignment_id: assignment.id, student_id: student.id });
 
 export const created: Assignment[] = $state([]);
@@ -33,7 +36,7 @@ function fresh() {
 		/** Comments written on the Review screen, per student id, after the sample ones. */
 		comments: {} as Record<string, FeedbackItem[]>,
 		/** feedback_resolutions.confirmation for the fake students, keyed `student id:feedback item id`. */
-		decisions: {} as Record<string, ConfirmationStatus>
+		decisions: {} as Record<string, Decision>
 	};
 }
 

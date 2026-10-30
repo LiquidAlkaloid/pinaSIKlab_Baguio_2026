@@ -1,7 +1,7 @@
 <script lang="ts">
 	import RevisionMeter from '#lib/components/RevisionMeter.svelte';
-	import { assignment, feedbackRound, firstName, otherWork, revisionCount, schoolClass, student } from '#lib/data.ts';
-	import { course, courseSteps, currentStep, demo, formatDate, resetDemo, stepNumber } from '#lib/state.svelte.ts';
+	import { assignment, firstName, otherWork, revisionCount, schoolClass, student } from '#lib/data.ts';
+	import { course, courseSteps, currentStep, demo, formatDate, itemsFor, resetDemo, stepNumber } from '#lib/state.svelte.ts';
 
 	const steps = $derived(courseSteps());
 	const next = $derived(currentStep(demo, steps));
@@ -34,7 +34,7 @@
 			<p class="small muted">Step {next.n} of {steps.length}{next.due_at ? ` · due ${formatDate(next.due_at)}` : ""}</p>
 			<p class="action">{next.action}</p>
 			{#if next.revision}
-				<p class="small"><span class="pill pill-gold">Your teacher left {feedbackRound(next.revision).length} comments</span></p>
+				<p class="small"><span class="pill pill-gold">Your teacher left {itemsFor(demo, next.revision).length} comments</span></p>
 			{/if}
 		</div>
 		{#if next.stage}
