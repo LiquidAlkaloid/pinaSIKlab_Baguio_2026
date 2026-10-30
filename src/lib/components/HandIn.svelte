@@ -1,18 +1,35 @@
 <script lang="ts">
 	// Hand-in form for one stage (#8, #9): the draft itself (written here or added as a file),
-	// the AI-use declaration and a short summary. Creates the stage_submissions,
+	// the AI-use declaration and, on the first draft, a short summary written by AI from the draft
+	// (src/lib/summarize.ts). On a revision the list of
+	// changes since the last draft sits under the editor instead. Creates the stage_submissions,
 	// ai_use_declarations and draft_summaries rows. The prototype keeps only file names.
+	import DraftChanges from '#lib/components/DraftChanges.svelte';
 	import { AI_SCALE, AI_TOOLS, AI_USES, type IntakeSource, type Step } from '#lib/data.ts';
+	import type { DraftChange } from '#lib/diff.ts';
 	import { demo, handIn, saveDocument, type StageSubmission } from '#lib/state.svelte.ts';
+	import { summarizeDraft, type DraftSummaryResult } from '#lib/summarize.ts';
 
 	let {
 		step,
+		what,
 		sampleName,
 		sampleText,
+		changes = null,
 		onsubmit
-	}: { step: Step; sampleName: string; sampleText: string; onsubmit: (ss: StageSubmission) => void } = $props();
+	}: {
+		step: Step;
+		/** What is handed in, for example "Revision 1" or "final essay". */
+		what: string;
+		sampleName: string;
+		sampleText: string;
+		/** On a revision: what changed since the last draft, shown under the editor. */
+		changes?: DraftChange[] | null;
+		onsubmit: (ss: StageSubmission) => void;
+	} = $props();
 
-	const MIN_WORDS = 40;
+	// A first draft needs some substance; a revision may get shorter as the student tightens it.
+	const minWords = $derived(step.revision ? 20 : 40);
 	const SOURCES: { value: IntakeSource; label: string }[] = [
 		{ value: 'in_app', label: 'Write it here' },
 		{ value: 'word_upload', label: 'Upload Word or PDF' },
@@ -20,37 +37,48 @@
 	];
 
 	// The form only shows before this stage is handed in, so it always starts empty.
-	// The text box starts from the working document, so Draft 2 picks up where Draft 1 left off.
+	// The text box is the working document itself, so each revision picks up where the last one left off,
+	// and fixes made on the comment cards are already in it.
 	let source: IntakeSource = $state('in_app');
-	let text = $state(demo.document.content);
+	const text = $derived(demo.document.content);
 	let fileKey = $state('');
 	let googleFileId = $state('');
 	let level: number | null = $state(null);
 	let tools: string[] = $state([]);
 	let description = $state('');
-	let summary = $state('');
+	let summary: DraftSummaryResult | null = $state(null);
+	/** The draft text the summary was made from, to notice when the draft changes after. */
+	let summarizedText = $state('');
+	let summarizing = $state(false);
 
 	const words = $derived(text.trim().split(/\s+/).filter(Boolean).length);
 	const fileName = $derived(fileKey.split('/').pop() ?? '');
 	const hasWork = $derived(
-		source === 'in_app' ? words >= MIN_WORDS : source === 'word_upload' ? !!fileKey : !!googleFileId
+		source === 'in_app' ? words >= minWords : source === 'word_upload' ? !!fileKey : !!googleFileId
 	);
 	const overLimit = $derived(level !== null && level > step.ai_level);
 	const aiReady = $derived(level === 0 || (level !== null && tools.length > 0 && description.trim().length > 3));
-	const ready = $derived(hasWork && aiReady && summary.trim().length >= 15);
+	// Only a first draft written here gets a summary; a revision shows its changes instead, and
+	// an uploaded file has no text to summarise.
+	const wantsSummary = $derived(!step.revision && source === 'in_app');
+	const summaryStale = $derived(!!summary && summarizedText !== text);
+	const summaryOk = $derived(!wantsSummary || (!!summary && !summaryStale));
+	const ready = $derived(hasWork && aiReady && summaryOk);
 
-	const isFirst = $derived(step.stage?.kind === 'first_draft');
-	const what = $derived(step.stage?.kind === 'final' ? 'final essay' : step.key === 'revise' ? 'Draft 2' : 'draft');
+	async function sumUp() {
+		summarizing = true;
+		const from = text;
+		summary = await summarizeDraft(from);
+		summarizedText = from;
+		summarizing = false;
+	}
+
 
 	function write(e: Event) {
-		text = (e.currentTarget as HTMLTextAreaElement).value;
-		saveDocument(text);
+		saveDocument((e.currentTarget as HTMLTextAreaElement).value);
 	}
 
-	function useSample() {
-		text = sampleText;
-		saveDocument(text);
-	}
+	const useSample = () => saveDocument(sampleText);
 
 	function pick(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
@@ -67,7 +95,7 @@
 			level_used: level ?? 0,
 			tools_used: level ? tools : [],
 			description: level ? description : '',
-			summary
+			summary: wantsSummary && summary ? summary.body : ''
 		});
 		onsubmit(ss);
 	}
@@ -88,13 +116,24 @@
 		<textarea class="doc" rows="12" value={text} oninput={write} placeholder="Start writing. It saves as you type."
 		></textarea>
 		<div class="doc-foot small">
-			<span class:muted={words < MIN_WORDS}>
-				{words} words · {words < MIN_WORDS ? `write at least ${MIN_WORDS}` : 'saved'}
+			<span class:muted={words < minWords}>
+				{words} words · {words < minWords ? `write at least ${minWords}` : 'saved'}
 			</span>
-			{#if text !== sampleText}
+			<!-- Only on the first draft: on a revision it would overwrite the fixes. -->
+			{#if !step.revision && words < minWords}
 				<button class="link" onclick={useSample}>Demo: fill in a sample {what}</button>
 			{/if}
 		</div>
+		{#if step.revision}
+			<div class="changes stack">
+				<h3>What changed since your last draft</h3>
+				<p class="muted small">
+					Your fixes from the comments are already in the draft above. Anything else you change is listed as
+					your own change. Your teacher sees this list.
+				</p>
+				<DraftChanges {changes} />
+			</div>
+		{/if}
 		<p class="muted small">Only your latest text is kept, plus a copy each time you hand in. Nothing records your typing.</p>
 	{:else if source === 'word_upload'}
 		{#if fileKey}
@@ -161,24 +200,39 @@
 	{/if}
 </section>
 
-<section class="card stack">
-	<h2>3. Sum it up</h2>
-	<label class="field">
-		{isFirst ? 'What is your position, in one or two sentences?' : 'What did you change since your last draft?'}
-		<textarea
-			bind:value={summary}
-			rows="3"
-			placeholder={isFirst
-				? 'Example: Baguio should keep jeepney routes but move terminals out of the market.'
-				: 'Example: I stated my position in one sentence and used ¶2 of the article as evidence.'}
-		></textarea>
-	</label>
-	<p class="muted small">Your teacher reads this first. It helps them see your thinking quickly.</p>
-</section>
+{#if wantsSummary}
+	<section class="card stack">
+		<h2>3. Sum it up</h2>
+		<p class="muted small">
+			AI reads your draft and sums up your position in one or two sentences. Your teacher reads this
+			first. If it misses your point, your draft may need a clearer position.
+		</p>
+		{#if summary && !summaryStale}
+			<blockquote class="summary">{summary.body}</blockquote>
+			<p class="small">
+				<span class="pill pill-brand">{summary.source === 'ai' ? 'Summary written by AI' : 'Sample summary: AI not connected here'}</span>
+			</p>
+			<p class="muted small">This is MYRACLE’s AI, not yours. It does not count as AI you used.</p>
+			<button class="btn btn-ghost btn-small" disabled={summarizing} onclick={sumUp}>
+				{summarizing ? 'Summing up…' : 'Sum it up again'}
+			</button>
+		{:else}
+			{#if summaryStale}
+				<p class="small hint">You changed your draft after it was summed up. Sum it up again.</p>
+			{/if}
+			<button class="btn btn-ghost" disabled={words < minWords || summarizing} onclick={sumUp}>
+				{summarizing ? 'Summing up…' : 'Sum up my draft'}
+			</button>
+			{#if words < minWords}<p class="muted small">Write at least {minWords} words first.</p>{/if}
+		{/if}
+	</section>
+{/if}
 
 <button class="btn btn-primary btn-block" disabled={!ready} onclick={submit}>Hand in {what}</button>
 {#if !ready}
-	<p class="muted small center">Add your {what}, answer the AI question and sum it up to hand in.</p>
+	<p class="muted small center">
+		Add your {what}{wantsSummary ? ', answer the AI question and sum it up' : ' and answer the AI question'} to hand in.
+	</p>
 {/if}
 
 <style>
@@ -240,6 +294,26 @@
 		flex: 1;
 		font-weight: 700;
 		word-break: break-word;
+	}
+	.changes {
+		gap: 0.6rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--line);
+	}
+	.changes h3 {
+		font-size: 0.95rem;
+	}
+	.summary {
+		margin: 0;
+		padding: 0.75rem 0.9rem;
+		background: var(--brand-soft);
+		border-radius: var(--radius-sm);
+		font-weight: 700;
+	}
+	.hint {
+		background: var(--gold-soft);
+		border-radius: var(--radius-sm);
+		padding: 0.6rem 0.75rem;
 	}
 	.choices {
 		gap: 0.5rem;

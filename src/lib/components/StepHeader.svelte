@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { steps } from '#lib/data.ts';
+	import { courseSteps } from '#lib/state.svelte.ts';
 
 	let { n, title, next }: { n: number; title: string; next?: string } = $props();
+	const steps = $derived(courseSteps());
 </script>
 
 <header class="step-header">
-	<ol class="bar" aria-label="Steps">
+	<ol class="bar" aria-label="Steps" style="grid-template-columns: repeat({steps.length}, 1fr)">
 		{#each steps as s (s.key)}
 			<li class:done={s.n < n} class:current={s.n === n} aria-current={s.n === n ? 'step' : undefined}>
 				<span class="dot"></span>
@@ -29,7 +30,6 @@
 		margin: 0 0 0.75rem;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
 		gap: 0.3rem;
 	}
 	.bar li {

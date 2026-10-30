@@ -5,63 +5,89 @@
 	import {
 		AI_USES,
 		assignment,
+		draftLabel,
 		classmates,
 		explainBack,
 		errorLabel,
-		feedbackItems,
+		feedbackRound,
+		revisionCount,
 		schoolClass,
-		steps,
 		student,
+		type Classmate,
 		type HubRow,
 		type ResolutionAction
 	} from '#lib/data.ts';
+	import DraftChanges from '#lib/components/DraftChanges.svelte';
 	import { downloadMatrix } from '#lib/export.ts';
-	import { demo, stepNumber } from '#lib/state.svelte.ts';
+	import { course, courseSteps, demo, draftChanges, snapshotFor, stepNumber, summaryFor } from '#lib/state.svelte.ts';
 
 	interface Row extends HubRow {
 		live: boolean;
 	}
 
-	// Teacher confirmations for the fake students. Bea's are saved in her feedback_resolutions.
-	let confirmedFake: Record<string, boolean[]> = $state({});
+	const steps = $derived(courseSteps());
+	const total = $derived(revisionCount(course.stages));
+
+	// Where a fake student is, as a step number in the current setup.
+	function classmateStep(c: Classmate) {
+		const last = steps.length;
+		const at = { read: 1, draft: 2, revise: 3, final: last - 1, reflect: last, done: last + 1 };
+		return Math.min(at[c.at], last + 1);
+	}
+
+	// Teacher confirmations for the fake students, by student and comment. Bea's are saved in
+	// her feedback_resolutions.
+	let confirmedFake: Record<string, boolean> = $state({});
 
 	const rows: Row[] = $derived([
 		{
 			student,
-			step: stepNumber(demo),
-			// A comment only counts as answered once Draft 2 is handed in (resolved_at is set).
-			resolutions: demo.feedback_resolutions.map((r) =>
-				r.resolved_at && r.action
-					? { action: r.action, decline_reason: r.decline_reason, changed_excerpt: r.changed_excerpt }
-					: null
-			),
+			step: stepNumber(demo, steps),
+			// A comment only counts as answered once the next draft is handed in (resolved_at is set).
+			comments: demo.feedback_resolutions.map((r) => ({
+				item: feedbackRound(r.round).find((i) => i.id === r.feedback_item_id)!,
+				round: r.round,
+				resolution:
+					r.resolved_at && r.action
+						? { action: r.action, decline_reason: r.decline_reason, changed_excerpt: r.changed_excerpt }
+						: null
+			})),
 			level_used: demo.ai_use_declarations.length
 				? Math.max(...demo.ai_use_declarations.map((a) => a.level_used))
 				: null,
 			late: false,
 			live: true
 		},
-		...classmates.map((c) => ({ ...c, live: false }))
+		...classmates.map((c) => ({
+			student: c.student,
+			step: classmateStep(c),
+			comments: feedbackRound(1).map((item, i) => ({ item, round: 1, resolution: c.resolutions[i] })),
+			level_used: c.level_used,
+			late: c.late,
+			live: false
+		}))
 	]);
 
-	function isConfirmed(row: Row, i: number) {
-		if (row.live) return demo.feedback_resolutions[i].confirmation === 'confirmed';
-		return confirmedFake[row.student.id]?.[i] ?? false;
+	const done = (row: Row) => row.step > steps.length;
+
+	function isConfirmed(row: Row, itemId: string) {
+		if (row.live) return demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)?.confirmation === 'confirmed';
+		return confirmedFake[`${row.student.id}:${itemId}`] ?? false;
 	}
 
-	function confirm(row: Row, i: number) {
+	function confirm(row: Row, itemId: string) {
 		if (row.live) {
-			demo.feedback_resolutions[i].confirmation = 'confirmed';
-			demo.feedback_resolutions[i].confirmed_at = new Date().toISOString();
+			const r = demo.feedback_resolutions.find((r) => r.feedback_item_id === itemId)!;
+			r.confirmation = 'confirmed';
+			r.confirmed_at = new Date().toISOString();
 		} else {
-			confirmedFake[row.student.id] ??= [];
-			confirmedFake[row.student.id][i] = true;
+			confirmedFake[`${row.student.id}:${itemId}`] = true;
 		}
 	}
 
 	const pendingDeclines = (row: Row) =>
-		row.resolutions.filter((r, i) => r?.action === 'declined' && !isConfirmed(row, i)).length;
-	const confirmedCount = (row: Row) => row.resolutions.filter((r, i) => r && isConfirmed(row, i)).length;
+		row.comments.filter((c) => c.resolution?.action === 'declined' && !isConfirmed(row, c.item.id)).length;
+	const confirmedCount = (row: Row) => row.comments.filter((c) => c.resolution && isConfirmed(row, c.item.id)).length;
 
 	const noFirstDraft = $derived(rows.filter((r) => r.step <= 2));
 	const declinesToCheck = $derived(rows.reduce((sum, r) => sum + pendingDeclines(r), 0));
@@ -80,32 +106,41 @@
 	function todo(row: Row): { label: string; act?: () => void } {
 		if (row.step <= 2) return { label: 'Remind' };
 		if (pendingDeclines(row) > 0) return { label: 'Check reason', act: () => (selectedId = row.student.id) };
-		if (row.step === 6) return { label: 'Done' };
+		if (done(row)) return { label: 'Done' };
 		return { label: 'On track' };
 	}
+
+	const stepName = (row: Row) => (done(row) ? 'All done' : steps[row.step - 1].name);
 
 	const aiShort = (level: number | null) =>
 		level === null ? '—' : (AI_USES.find((u) => u.level === level)?.label.replace(/^I used AI to /, 'AI: ') ?? '—');
 
-	const answered = (row: Row) => row.resolutions.filter(Boolean).length;
+	const answered = (row: Row) => row.comments.filter((c) => c.resolution).length;
 
 	// v_revision_matrix: confirmed items only.
 	function exportFor(row: Row) {
-		const matrix = feedbackItems.flatMap((item, i) => {
-			const r = row.resolutions[i];
-			if (!r || !isConfirmed(row, i)) return [];
-			return [
-				{
-					item_no: item.number,
-					comment: item.body,
-					action_taken: LABEL[r.action],
-					action_detail: (r.action === 'declined' ? r.decline_reason : r.changed_excerpt) ?? '',
-					page: item.anchor_page
-				}
-			];
-		});
+		const matrix = row.comments
+			.filter((c) => c.resolution && isConfirmed(row, c.item.id))
+			.map(({ item, round, resolution: r }, i) => ({
+				item_no: i + 1,
+				comment: total > 1 ? `${draftLabel(course.stages[round - 1], course.stages)}: ${item.body}` : item.body,
+				action_taken: LABEL[r!.action],
+				action_detail: (r!.action === 'declined' ? r!.decline_reason : r!.changed_excerpt) ?? '',
+				page: item.anchor_page
+			}));
 		downloadMatrix(row.student.full_name, assignment.title, matrix);
 	}
+
+	// The AI summary of Bea's first draft: the first thing the teacher reads.
+	const firstSummary = $derived(summaryFor(demo, snapshotFor(demo, course.stages[0]))?.body);
+
+	// Bea's changes that no comment asked for, per draft she has handed in.
+	const ownChanges = $derived(
+		course.stages
+			.slice(1)
+			.map((stage, i) => ({ stage, n: i + 2, changes: draftChanges(demo, course.stages, i + 1) }))
+			.filter((d) => snapshotFor(demo, d.stage))
+	);
 
 	const LABEL: Record<ResolutionAction, string> = {
 		addressed: 'Fixed',
@@ -118,7 +153,7 @@
 
 <div class="head">
 	<div>
-		<p class="small muted">{schoolClass.name} · {rows.length} students</p>
+		<p class="small muted">{schoolClass.name} · {rows.length} students · {total} revision{total === 1 ? '' : 's'} (the last is the final)</p>
 		<h1>{assignment.title}</h1>
 	</div>
 	<a class="btn btn-primary" href="/teacher/new">New assignment</a>
@@ -190,15 +225,15 @@
 									{#if row.live}<span class="pill pill-brand live">live demo</span>{/if}
 								</td>
 								<td>
-									{row.step > 5 ? 'All done' : steps[row.step - 1].name}
+									{stepName(row)}
 									{#if row.late}<span class="pill pill-gold">late</span>{/if}
 								</td>
 								<td>
 									{#if row.step >= 3}
 										<span class="answers">
-											{#each row.resolutions as r, i (i)}<i class={r?.action ?? 'none'} title={r ? LABEL[r.action] : 'Not yet'}></i>{/each}
+											{#each row.comments as c (c.item.id)}<i class={c.resolution?.action ?? 'none'} title={c.resolution ? LABEL[c.resolution.action] : 'Not yet'}></i>{/each}
 										</span>
-										{answered(row)} of {row.resolutions.length}
+										{answered(row)} of {row.comments.length}
 									{:else}<span class="muted">—</span>{/if}
 								</td>
 								<td class="small">{aiShort(row.level_used)}</td>
@@ -225,40 +260,52 @@
 				<button class="btn btn-ghost btn-small" onclick={() => (selectedId = null)} aria-label="Close">Close</button>
 			</div>
 			<p class="small muted">
-				{selected.step > 5 ? 'All 5 steps done' : `On step ${selected.step}: ${steps[selected.step - 1].name}`}
+				{done(selected) ? `All ${steps.length} steps done` : `On step ${selected.step}: ${stepName(selected)}`}
 			</p>
+
+			{#if selected.live && firstSummary}
+				<h3>First draft, summed up by AI</h3>
+				<p class="small">“{firstSummary}”</p>
+			{/if}
 
 			<h3>Comments</h3>
 			{#if answered(selected) === 0}
 				<p class="small muted">No comments answered yet.</p>
 			{:else}
 				<ul class="items">
-					{#each feedbackItems as item, i (item.id)}
-						{@const r = selected.resolutions[i]}
+					{#each selected.comments as { item, round, resolution: r } (item.id)}
 						<li>
 							<p class="pen small-pen">{item.body}</p>
 							<p class="small">
 								{#if r}<span class="pill status {r.action}">{LABEL[r.action]}</span>{:else}<span class="pill">Not yet</span>{/if}
-								<span class="muted">{errorLabel(item.error_type_id)}</span>
+								<span class="muted">{total > 1 ? `${draftLabel(course.stages[round - 1], course.stages)} · ` : ''}{errorLabel(item.error_type_id)}</span>
 							</p>
 							{#if r}
 								<div class="reason">
 									<p>“{r.action === 'declined' ? r.decline_reason : r.changed_excerpt}”</p>
-									{#if isConfirmed(selected, i)}
+									{#if isConfirmed(selected, item.id)}
 										<span class="pill pill-ok">{r.action === 'declined' ? 'You agreed' : 'Confirmed'}</span>
 									{:else if r.action === 'declined'}
 										<div class="reason-actions">
-											<button class="btn btn-primary btn-small" onclick={() => confirm(selected, i)}>Agree</button>
+											<button class="btn btn-primary btn-small" onclick={() => confirm(selected, item.id)}>Agree</button>
 											<button class="btn btn-ghost btn-small">Talk to student</button>
 										</div>
 									{:else}
-										<button class="btn btn-ghost btn-small" onclick={() => confirm(selected, i)}>Confirm the change</button>
+										<button class="btn btn-ghost btn-small" onclick={() => confirm(selected, item.id)}>Confirm the change</button>
 									{/if}
 								</div>
 							{/if}
 						</li>
 					{/each}
 				</ul>
+			{/if}
+
+			{#if selected.live && ownChanges.length}
+				<h3>Changes they made on their own</h3>
+				{#each ownChanges as d (d.stage.id)}
+					<p class="small"><strong>{draftLabel(d.stage, course.stages)}</strong></p>
+					<DraftChanges changes={d.changes} own="Their own change" onlyOwn />
+				{/each}
 			{/if}
 
 			<h3>AI they declared</h3>
@@ -268,7 +315,7 @@
 				Download revision matrix (Word)
 			</button>
 			<p class="small muted">
-				{confirmed} of {feedbackItems.length} comments confirmed. Only confirmed comments go in the matrix.
+				{confirmed} of {selected.comments.length} comments confirmed. Only confirmed comments go in the matrix.
 			</p>
 			{#if selected.live}
 				<p class="small muted">This is Bea’s real demo data. The student sees this same report in “See how you did”.</p>

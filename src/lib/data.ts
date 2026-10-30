@@ -115,7 +115,7 @@ export interface Stage {
 
 /**
  * A teacher comment. In the database it also has stage_submission_id and submission_id;
- * the demo attaches these comments to whatever first draft the student hands in.
+ * the demo attaches each round of comments to the draft the student hands in.
  */
 export interface FeedbackItem {
 	id: string;
@@ -190,7 +190,8 @@ export const errorTypes: ErrorType[] = [
 	{ id: 'et-evidence', code: 'evidence', label: 'Evidence' },
 	{ id: 'et-structure', code: 'structure', label: 'Structure' },
 	{ id: 'et-grammar', code: 'grammar', label: 'Grammar' },
-	{ id: 'et-citation', code: 'citation', label: 'Citation' }
+	{ id: 'et-citation', code: 'citation', label: 'Citation' },
+	{ id: 'et-clarity', code: 'clarity', label: 'Clarity' }
 ];
 
 export const errorLabel = (id: string | null) => errorTypes.find((t) => t.id === id)?.label ?? '';
@@ -231,47 +232,96 @@ export const assignment: Assignment = {
 	due_at: `2026-11-13T23:59:00${PH}`
 };
 
-/** The teacher's stages: one first draft, one or more revisions, one final. */
-export const stages: Stage[] = [
-	{ id: 'stage-1', assignment_id: assignment.id, position: 1, kind: 'first_draft', goal: 'Draft 1: ideas and a clear position.', ai_level: 1, due_at: `2026-11-06T23:59:00${PH}` },
-	{ id: 'stage-2', assignment_id: assignment.id, position: 2, kind: 'revision', goal: 'Draft 2: structure and evidence from the article.', ai_level: 2, due_at: `2026-11-10T23:59:00${PH}` },
+/**
+ * The stages the class starts with: a first draft, then 2 revisions. Every revision except the
+ * last gets teacher comments; the last revision is the final essay. The teacher can change the
+ * number of revisions in the builder (see `course` in state.svelte.ts).
+ */
+export const defaultStages: Stage[] = [
+	{ id: 'stage-1', assignment_id: assignment.id, position: 1, kind: 'first_draft', goal: 'First draft: ideas and a clear position.', ai_level: 1, due_at: `2026-11-06T23:59:00${PH}` },
+	{ id: 'stage-2', assignment_id: assignment.id, position: 2, kind: 'revision', goal: 'Revision 1: structure and evidence from the article.', ai_level: 2, due_at: `2026-11-10T23:59:00${PH}` },
 	{ id: 'stage-3', assignment_id: assignment.id, position: 3, kind: 'final', goal: 'Final: clarity and correctness.', ai_level: 2, due_at: `2026-11-13T23:59:00${PH}` }
 ];
 
-export const stageOf = (kind: StageKind) => stages.find((s) => s.kind === kind)!;
+/** Most revisions a teacher can set. */
+export const MAX_REVISIONS = 4;
 
-export const feedbackItems: FeedbackItem[] = [
-	{
-		id: '80000000-0000-0000-0000-000000000001',
-		number: 1,
-		author_id: teacher.id,
-		criterion_id: 'rc-position',
-		error_type_id: 'et-structure',
-		body: 'What is your position? Say it in one sentence.',
-		anchor_page: 1,
-		anchor_excerpt: 'Public transport in Baguio has many problems and also many good sides.'
-	},
-	{
-		id: '80000000-0000-0000-0000-000000000002',
-		number: 2,
-		author_id: teacher.id,
-		criterion_id: 'rc-position',
-		error_type_id: 'et-evidence',
-		body: 'Says who? The article disagrees (¶2). Use it.',
-		anchor_page: 1,
-		anchor_excerpt: 'Everyone knows that jeepneys are the reason for the traffic.'
-	},
-	{
-		id: '80000000-0000-0000-0000-000000000003',
-		number: 3,
-		author_id: teacher.id,
-		criterion_id: 'rc-clarity',
-		error_type_id: 'et-grammar',
-		body: '“should have” and which office? Be specific.',
-		anchor_page: 2,
-		anchor_excerpt: 'In conclusion the government should of fixed it already.'
-	}
+/** How many times students revise: every stage after the first draft. The last one is the final. */
+export const revisionCount = (stages: Stage[]) => stages.length - 1;
+
+/**
+ * What students and teachers call each hand-in: "First draft", "Revision 1", ..., and "Final"
+ * for the last revision. One name everywhere, matching the teacher's "how many revisions".
+ */
+export const draftLabel = (stage: Stage, stages: Stage[]) =>
+	stage.position === 1 ? 'First draft' : stage.position === stages.length ? 'Final' : `Revision ${stage.position - 1}`;
+
+type Comment = Omit<FeedbackItem, 'id' | 'number' | 'author_id'>;
+
+/** Fake teacher comments per round. Round r comments on Draft r. Later rounds reuse the last set. */
+const ROUND_COMMENTS: Comment[][] = [
+	[
+		{
+			criterion_id: 'rc-position',
+			error_type_id: 'et-structure',
+			body: 'What is your position? Say it in one sentence.',
+			anchor_page: 1,
+			anchor_excerpt: 'Public transport in Baguio has many problems and also many good sides.'
+		},
+		{
+			criterion_id: 'rc-position',
+			error_type_id: 'et-evidence',
+			body: 'Says who? The article disagrees (¶2). Use it.',
+			anchor_page: 1,
+			anchor_excerpt: 'Everyone knows that jeepneys are the reason for the traffic.'
+		},
+		{
+			criterion_id: 'rc-clarity',
+			error_type_id: 'et-grammar',
+			body: '“should have” and which office? Be specific.',
+			anchor_page: 2,
+			anchor_excerpt: 'In conclusion the government should of fixed it already.'
+		}
+	],
+	[
+		{
+			criterion_id: 'rc-position',
+			error_type_id: 'et-evidence',
+			body: 'Better! Now back up the late-for-class point. ¶1 has numbers.',
+			anchor_page: 1,
+			anchor_excerpt: 'Students wait a long time at the terminals near the market and some are late for class.'
+		},
+		{
+			criterion_id: 'rc-position',
+			error_type_id: 'et-structure',
+			body: 'Who gains and who pays? ¶5 asks you this. Answer it.',
+			anchor_page: 2,
+			anchor_excerpt: 'Jeepneys are cheap and they go to many places, so a lot of people need them.'
+		}
+	],
+	[
+		{
+			criterion_id: 'rc-clarity',
+			error_type_id: 'et-clarity',
+			body: 'Your opening is long. Can you cut one sentence?',
+			anchor_page: 1,
+			anchor_excerpt: 'Baguio should keep its jeepney routes but move the terminals away from the market.'
+		},
+		{
+			criterion_id: 'rc-clarity',
+			error_type_id: 'et-citation',
+			body: 'Check that every ¶ you cite says what you claim.',
+			anchor_page: 2,
+			anchor_excerpt: 'Other cities moved terminals off their busiest streets (¶4).'
+		}
+	]
 ];
+
+/** The teacher's comments on Draft `round`. In the database these are feedback_items rows. */
+export function feedbackRound(round: number): FeedbackItem[] {
+	const pool = ROUND_COMMENTS[Math.min(round, ROUND_COMMENTS.length) - 1];
+	return pool.map((c, i) => ({ id: `fi-r${round}-${i + 1}`, number: i + 1, author_id: teacher.id, ...c }));
+}
 
 /** Bea's grade (grades) and rubric scores (criterion_scores). The demo releases it when she hands in her final. */
 export const grade: Grade = { output_score: 84, process_score: 92, final_score: 86, released_at: null };
@@ -287,10 +337,10 @@ export const criterionScores: CriterionScore[] = [
 /** v_latest_goal: the goal Bea set at the end of her last assignment. */
 export const lastGoal = 'Revise the argument, not only the grammar.';
 
-// ---------- the student's 5 steps (screens, not tables) ----------
-// Draft, Revise and Final are the 3 stages above. Read and Reflect have no stage row:
+// ---------- the student's steps (screens, not tables) ----------
+// Read, then one step per stage, then Reflect. Read and Reflect have no stage row:
 // see "Gaps" in the README.
-export type StepKey = 'read' | 'draft' | 'revise' | 'final' | 'reflect';
+export type StepKey = string;
 
 export interface Step {
 	key: StepKey;
@@ -305,42 +355,58 @@ export interface Step {
 	ai_level: number;
 	due_at: string;
 	stage: Stage | null;
+	/** Which revision this is (1 to revisionCount), null for the other steps. */
+	revision: number | null;
 }
 
-const fromStage = (kind: StageKind) => {
-	const s = stageOf(kind);
-	return { goal: s.goal ?? '', ai_level: s.ai_level, due_at: s.due_at ?? '', stage: s };
-};
-
-export const steps: Step[] = [
-	{
-		key: 'read',
-		n: 1,
-		name: 'Read',
-		action: 'Read the article and sum it up',
-		cta: 'Start reading',
-		href: '/student/read',
-		goal: 'Understand the article before you write about it.',
-		ai_level: 0,
-		due_at: `2026-11-03T23:59:00${PH}`,
-		stage: null
-	},
-	{ key: 'draft', n: 2, name: 'Draft', action: 'Hand in your first draft', cta: 'Hand in draft', href: '/student/draft', ...fromStage('first_draft') },
-	{ key: 'revise', n: 3, name: 'Revise', action: 'Answer your teacher’s comments and hand in Draft 2', cta: 'See the comments', href: '/student/feedback', ...fromStage('revision') },
-	{ key: 'final', n: 4, name: 'Final', action: 'Hand in your final essay', cta: 'Hand in final', href: '/student/final', ...fromStage('final') },
-	{
-		key: 'reflect',
-		n: 5,
-		name: 'Reflect',
-		action: 'See how you did and set a goal',
-		cta: 'See how you did',
-		href: '/student/mirror',
-		goal: 'Look back at how you worked and pick one thing to improve.',
-		ai_level: 0,
-		due_at: `2026-11-17T23:59:00${PH}`,
-		stage: null
-	}
-];
+export function stepsFor(stages: Stage[]): Step[] {
+	const total = revisionCount(stages);
+	const list: Omit<Step, 'n'>[] = [
+		{
+			key: 'read',
+			name: 'Read',
+			action: 'Read the article and sum it up',
+			cta: 'Start reading',
+			href: '/student/read',
+			goal: 'Understand the article before you write about it.',
+			ai_level: 0,
+			due_at: `2026-11-03T23:59:00${PH}`,
+			stage: null,
+			revision: null
+		},
+		...stages.map((stage, i) => {
+			const base = { goal: stage.goal ?? '', ai_level: stage.ai_level, due_at: stage.due_at ?? '', stage };
+			if (i === 0) {
+				return { key: 'draft', name: 'Draft', action: 'Hand in your first draft', cta: 'Hand in draft', href: '/student/draft', revision: null, ...base };
+			}
+			const last = i === total;
+			return {
+				key: `revise-${i}`,
+				name: last ? 'Final' : `Revision ${i}`,
+				action: last
+					? 'Answer the comments and hand in your final essay'
+					: `Answer the comments and hand in Revision ${i}`,
+				cta: 'See the comments',
+				href: `/student/revise/${i}`,
+				revision: i,
+				...base
+			};
+		}),
+		{
+			key: 'reflect',
+			name: 'Reflect',
+			action: 'See how you did and set a goal',
+			cta: 'See how you did',
+			href: '/student/mirror',
+			goal: 'Look back at how you worked and pick one thing to improve.',
+			ai_level: 0,
+			due_at: `2026-11-17T23:59:00${PH}`,
+			stage: null,
+			revision: null
+		}
+	];
+	return list.map((s, i) => ({ ...s, n: i + 1 }));
+}
 
 /** Other work on the student home screen. Visual only for the demo. */
 export const otherWork = [
@@ -356,16 +422,32 @@ export interface HubResolution {
 	changed_excerpt: string | null;
 }
 
+export interface HubComment {
+	item: FeedbackItem;
+	/** The draft the comment is on. */
+	round: number;
+	/** null = still open (no resolution row). */
+	resolution: HubResolution | null;
+}
+
+/** Where a fake student is, in words, so it still fits when the teacher changes the number of revisions. */
+export type Progress = 'read' | 'draft' | 'revise' | 'final' | 'reflect' | 'done';
+
 /** One student's row on the Educator Hub: what the hub's queries return per enrolled student. */
 export interface HubRow {
 	student: User;
-	/** Step the student is on (1 to 5), 6 = all done. */
+	/** Step the student is on (1 to steps.length), steps.length + 1 = all done. */
 	step: number;
-	/** One per feedback item, by number. null = still open (no resolution row). */
-	resolutions: (HubResolution | null)[];
+	comments: HubComment[];
 	/** Highest ai_use_declarations.level_used so far, null if nothing handed in. */
 	level_used: number | null;
 	late: boolean;
+}
+
+/** A fake student. Their comments are the first round's; `step` is worked out by the hub. */
+export interface Classmate extends Omit<HubRow, 'step' | 'comments'> {
+	at: Progress;
+	resolutions: (HubResolution | null)[];
 }
 
 let fakeId = 100;
@@ -382,14 +464,14 @@ const kept = (decline_reason: string): HubResolution => ({ action: 'declined', d
 const open = [null, null, null];
 
 /** Fake class for the Educator Hub. Bea's row is added live from the student demo. */
-export const classmates: HubRow[] = [
-	{ student: classmate('Carlo Bautista'), step: 1, resolutions: open, level_used: null, late: false },
-	{ student: classmate('Joanna Lim'), step: 1, resolutions: open, level_used: null, late: false },
-	{ student: classmate('Paolo Ramos'), step: 2, resolutions: open, level_used: null, late: false },
-	{ student: classmate('Mika Fernandez'), step: 3, resolutions: [fixed(), null, null], level_used: 1, late: false },
+export const classmates: Classmate[] = [
+	{ student: classmate('Carlo Bautista'), at: 'read', resolutions: open, level_used: null, late: false },
+	{ student: classmate('Joanna Lim'), at: 'read', resolutions: open, level_used: null, late: false },
+	{ student: classmate('Paolo Ramos'), at: 'draft', resolutions: open, level_used: null, late: false },
+	{ student: classmate('Mika Fernandez'), at: 'revise', resolutions: [fixed(), null, null], level_used: 1, late: false },
 	{
 		student: classmate('Daniel Aquino'),
-		step: 4,
+		at: 'final',
 		resolutions: [
 			kept('My first paragraph already says I support more buses.'),
 			kept('I used my own commute as evidence instead.'),
@@ -398,16 +480,16 @@ export const classmates: HubRow[] = [
 		level_used: 0,
 		late: false
 	},
-	{ student: classmate('Andrea Cruz'), step: 4, resolutions: [fixed(), fixed(), partly()], level_used: 2, late: true },
+	{ student: classmate('Andrea Cruz'), at: 'final', resolutions: [fixed(), fixed(), partly()], level_used: 2, late: true },
 	{
 		student: classmate('Kevin Tan'),
-		step: 4,
+		at: 'final',
 		resolutions: [fixed(), kept('¶3 is a quote from a driver I interviewed, so I kept the wording.'), fixed()],
 		level_used: 0,
 		late: false
 	},
-	{ student: classmate('Lea Villanueva'), step: 5, resolutions: [fixed(), fixed(), fixed()], level_used: 1, late: false },
-	{ student: classmate('Rafael Gomez'), step: 6, resolutions: [fixed(), partly(), fixed()], level_used: 0, late: false }
+	{ student: classmate('Lea Villanueva'), at: 'reflect', resolutions: [fixed(), fixed(), fixed()], level_used: 1, late: false },
+	{ student: classmate('Rafael Gomez'), at: 'done', resolutions: [fixed(), partly(), fixed()], level_used: 0, late: false }
 ];
 
 /** explain_back_checks: students picked at random to explain one change live in class. */

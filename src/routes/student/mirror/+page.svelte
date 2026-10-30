@@ -1,13 +1,28 @@
 <script lang="ts">
 	// Process Mirror (#7): the student sees the same process report their teacher saw.
 	// Only their own work. No class averages, no rankings, no other students.
+	import DraftChanges from '#lib/components/DraftChanges.svelte';
 	import Locked from '#lib/components/Locked.svelte';
 	import StepHeader from '#lib/components/StepHeader.svelte';
-	import { AI_USES, assignment, criterionScores, feedbackItems, grade, rubricCriteria, steps } from '#lib/data.ts';
-	import { declarationFor, demo, formatDate, onTime, snapshotFor, summaryFor, type AiUseDeclaration } from '#lib/state.svelte.ts';
+	import { AI_USES, assignment, criterionScores, draftLabel, feedbackRound, grade, rubricCriteria } from '#lib/data.ts';
+	import {
+		course,
+		courseSteps,
+		declarationFor,
+		demo,
+		draftChanges,
+		roundOf,
+		formatDate,
+		onTime,
+		snapshotFor,
+		summaryFor,
+		type AiUseDeclaration
+	} from '#lib/state.svelte.ts';
 
-	const stageSteps = steps.filter((s) => s.stage);
-	const final = $derived(snapshotFor(demo, steps[3].stage));
+	const steps = $derived(courseSteps());
+	const stageSteps = $derived(steps.filter((s) => s.stage));
+	const final = $derived(snapshotFor(demo, course.stages[course.stages.length - 1]));
+	const reflectStep = $derived(steps[steps.length - 1]);
 
 	const timeline = $derived([
 		{ step: steps[0], at: demo.reading.saved_at },
@@ -19,15 +34,19 @@
 		partly: demo.feedback_resolutions.filter((r) => r.action === 'partly_addressed').length,
 		declined: demo.feedback_resolutions.filter((r) => r.action === 'declined').length
 	});
-	const total = feedbackItems.length;
+	const total = $derived(demo.feedback_resolutions.length);
 
-	const changes = $derived(
-		feedbackItems.map((item, i) => {
-			const r = demo.feedback_resolutions[i];
+	// For each draft after the first: what changed since the one before, and what was kept on purpose.
+	const revisions = $derived(
+		course.stages.slice(1).map((stage, i) => {
+			const k = i + 1;
+			const items = feedbackRound(k);
 			return {
-				n: item.number,
-				action: r.action,
-				text: r.action === 'declined' ? `Kept it the same: “${r.decline_reason}”` : r.changed_excerpt
+				stage,
+				changes: draftChanges(demo, course.stages, k),
+				kept: roundOf(demo, k)
+					.filter((r) => r.action === 'declined')
+					.map((r) => ({ n: items.find((it) => it.id === r.feedback_item_id)?.number, reason: r.decline_reason }))
 			};
 		})
 	);
@@ -45,7 +64,6 @@
 		const tools = ai.tools_used.length ? ` (${ai.tools_used.join(', ')})` : '';
 		return aiLabel(ai.level_used) + tools + (ai.description ? `: “${ai.description}”` : '');
 	}
-	const draftName = (key: string) => (key === 'draft' ? 'Draft 1' : key === 'revise' ? 'Draft 2' : 'Final');
 
 	const processCriteria = rubricCriteria
 		.filter((c) => c.kind === 'process')
@@ -60,12 +78,12 @@
 	}
 </script>
 
-<svelte:head><title>Step 5: How you did · MYRACLE</title></svelte:head>
+<svelte:head><title>How you did · MYRACLE</title></svelte:head>
 
-<StepHeader n={5} title="How your process went" />
+<StepHeader n={reflectStep.n} title="How your process went" />
 
 {#if !final}
-	<Locked what="Hand in your final essay first." href="/student/final" />
+	<Locked what="Hand in your final essay first." href="/student/revise/{course.stages.length - 1}" />
 {:else}
 	<div class="card banner">
 		<p>
@@ -80,12 +98,12 @@
 			<p class="big">{grade.final_score}</p>
 		</div>
 		<p class="small muted">
-			Essay {grade.output_score} ({100 - assignment.process_weight_pct}%) · How you worked on it {grade.process_score} ({assignment.process_weight_pct}%)
+			Essay {grade.output_score} ({100 - course.process_weight_pct}%) · How you worked on it {grade.process_score} ({course.process_weight_pct}%)
 		</p>
 	</section>
 
 	<section class="card stack">
-		<h2><span class="sec">1</span> Your steps</h2>
+		<h2><span class="sec">1</span> Steps and when you handed them in</h2>
 		<ol class="timeline">
 			{#each timeline as t (t.step.key)}
 				{@const ok = onTime(t.at, t.step.due_at)}
@@ -116,20 +134,20 @@
 
 	<section class="card stack">
 		<h2><span class="sec">3</span> What changed between your drafts</h2>
-		<dl class="ai">
-			{#each drafts.slice(1) as d (d.step.key)}
-				<dt>{draftName(d.step.key)}</dt>
-				<dd>“{d.summary}”</dd>
-			{/each}
-		</dl>
-		<ul class="changes">
-			{#each changes as c (c.n)}
-				<li class={c.action}>
-					<span>{c.text}</span>
-					<span class="small muted">comment {c.n}{c.action === 'partly_addressed' ? ', partly' : ''}</span>
-				</li>
-			{/each}
-		</ul>
+		{#if drafts[0]?.summary}
+			<p class="muted">Your first draft, summed up by AI: “{drafts[0].summary}”</p>
+		{/if}
+		{#each revisions as rev, i (rev.stage.id)}
+			<div class="rev stack">
+				<h3>
+					{draftLabel(rev.stage, course.stages)}, compared with {i === 0 ? 'your first draft' : draftLabel(course.stages[i], course.stages)}
+				</h3>
+				<DraftChanges changes={rev.changes} />
+				{#each rev.kept as kept (kept.n)}
+					<p class="kept small">Comment {kept.n}, kept the same: “{kept.reason}”</p>
+				{/each}
+			</div>
+		{/each}
 	</section>
 
 	<section class="card stack">
@@ -138,7 +156,7 @@
 			<dt>Read</dt>
 			<dd>Summary written in MYRACLE, no AI</dd>
 			{#each drafts as d (d.step.key)}
-				<dt>{draftName(d.step.key)}</dt>
+				<dt>{d.step.stage ? draftLabel(d.step.stage, course.stages) : ''}</dt>
 				<dd>
 					{aiText(d.ai)}
 				</dd>
@@ -233,7 +251,7 @@
 		margin: 0;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(4.25rem, 1fr));
 		gap: 0.4rem;
 	}
 	.timeline li {
@@ -285,25 +303,19 @@
 		border-radius: 3px;
 		margin-right: 0.35rem;
 	}
-	.changes {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
+	.rev {
 		gap: 0.6rem;
 	}
-	.changes li {
-		display: flex;
-		flex-direction: column;
+	.rev + .rev {
+		padding-top: 0.85rem;
+		border-top: 1px solid var(--line);
+	}
+	.rev h3 {
+		font-size: 0.95rem;
+	}
+	.kept {
 		padding-left: 0.75rem;
-		border-left: 3px solid var(--ok);
-	}
-	.changes li.partly_addressed {
-		border-color: var(--partly);
-	}
-	.changes li.declined {
-		border-color: var(--kept);
+		border-left: 3px solid var(--kept);
 	}
 	.ai {
 		display: grid;

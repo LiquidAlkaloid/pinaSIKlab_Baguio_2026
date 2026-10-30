@@ -4,7 +4,7 @@
 	import '@fontsource/caveat/600.css';
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { demo, loadDemo, saveDemo } from '#lib/state.svelte.ts';
+	import { course, demo, loadDemo, saveDemo } from '#lib/state.svelte.ts';
 
 	let { children } = $props();
 	let loaded = $state(false);
@@ -14,10 +14,11 @@
 		loaded = true;
 	});
 
-	// Save the demo whenever anything in it changes.
+	// Save the demo and the teacher's setup whenever anything in them changes.
 	$effect(() => {
-		const json = JSON.stringify(demo);
-		if (loaded) saveDemo(json);
+		const demoJson = JSON.stringify(demo);
+		const courseJson = JSON.stringify(course);
+		if (loaded) saveDemo(demoJson, courseJson);
 	});
 </script>
 

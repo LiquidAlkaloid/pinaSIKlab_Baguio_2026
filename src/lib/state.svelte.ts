@@ -2,18 +2,33 @@
 // database (submissions, documents, stage_submissions, ...). Saved in the browser so a page
 // refresh doesn't lose the walkthrough. Later these become inserts into Supabase.
 import {
-	feedbackItems,
+	assignment,
+	defaultStages,
+	feedbackRound,
 	lastGoal,
-	stageOf,
+	revisionCount,
+	stepsFor,
 	type ConfirmationStatus,
 	type IntakeSource,
 	type PromptKey,
 	type ResolutionAction,
 	type Stage,
-	type StageKind,
-	type StepKey,
+	type Step,
 	type SubmissionStatus
 } from './data.ts';
+import { changesText, diffSentences, labelChanges, type DraftChange } from './diff.ts';
+
+/**
+ * What the teacher set up in the builder: the assignment's stages (how many revisions) and the
+ * process weight. The student screens read it, so a change shows up on the student side.
+ */
+export const course = $state({
+	stages: defaultStages as Stage[],
+	process_weight_pct: assignment.process_weight_pct
+});
+
+/** The student's steps for the current setup. */
+export const courseSteps = () => stepsFor(course.stages);
 
 export interface StageSubmission {
 	id: string;
@@ -35,7 +50,8 @@ export interface AiUseDeclaration {
 
 export interface DraftSummary {
 	stage_submission_id: string;
-	kind: 'student' | 'changes';
+	/** 'ai' = summary written by AI from the draft; 'changes' = what changed since the last draft. */
+	kind: 'student' | 'changes' | 'ai';
 	body: string;
 }
 
@@ -45,6 +61,8 @@ export interface DraftSummary {
  */
 export interface FeedbackResolution {
 	feedback_item_id: string;
+	/** Which round of comments: round r is about Draft r and is closed by the next draft. */
+	round: number;
 	action: ResolutionAction | null;
 	decline_reason: string;
 	revised_stage_submission_id: string | null;
@@ -76,9 +94,12 @@ function fresh() {
 		stage_submissions: [] as StageSubmission[],
 		ai_use_declarations: [] as AiUseDeclaration[],
 		draft_summaries: [] as DraftSummary[],
-		feedback_resolutions: feedbackItems.map(
-			(item): FeedbackResolution => ({
+		// One row per comment in every round. Round r has comments on Draft r.
+		feedback_resolutions: Array.from({ length: revisionCount(course.stages) }, (_, i) => i + 1).flatMap((round) =>
+			feedbackRound(round).map(
+				(item): FeedbackResolution => ({
 				feedback_item_id: item.id,
+				round,
 				action: null,
 				decline_reason: '',
 				revised_stage_submission_id: null,
@@ -86,7 +107,8 @@ function fresh() {
 				resolved_at: null,
 				confirmation: 'pending',
 				confirmed_at: null
-			})
+				})
+			)
 		),
 		reflection: {
 			responses: { changed_most: '', hardest_item: '', score_surprise: '' } as Record<PromptKey, string>,
@@ -103,10 +125,13 @@ export type Demo = ReturnType<typeof fresh>;
 
 export const demo: Demo = $state(fresh());
 
-const KEY = 'myracle-demo-v2';
+const KEY = 'myracle-demo-v4';
+const COURSE_KEY = 'myracle-course-v2';
 
 export function loadDemo() {
 	try {
+		const savedCourse = localStorage.getItem(COURSE_KEY);
+		if (savedCourse) Object.assign(course, JSON.parse(savedCourse));
 		const saved = localStorage.getItem(KEY);
 		if (saved) Object.assign(demo, JSON.parse(saved));
 	} catch {
@@ -114,9 +139,10 @@ export function loadDemo() {
 	}
 }
 
-export function saveDemo(json: string) {
+export function saveDemo(demoJson: string, courseJson: string) {
 	try {
-		localStorage.setItem(KEY, json);
+		localStorage.setItem(KEY, demoJson);
+		localStorage.setItem(COURSE_KEY, courseJson);
 	} catch {
 		// See loadDemo.
 	}
@@ -124,6 +150,13 @@ export function saveDemo(json: string) {
 
 export function resetDemo() {
 	Object.assign(demo, fresh());
+}
+
+/** The teacher gives the class a new setup. The demo student starts the walkthrough over on it. */
+export function setCourse(stages: Stage[], process_weight_pct: number) {
+	course.stages = stages;
+	course.process_weight_pct = process_weight_pct;
+	resetDemo();
 }
 
 const now = () => new Date().toISOString();
@@ -144,7 +177,7 @@ export const declarationFor = (d: Demo, ss: StageSubmission | undefined) =>
 	ss && d.ai_use_declarations.find((a) => a.stage_submission_id === ss.id);
 
 export const summaryFor = (d: Demo, ss: StageSubmission | undefined) =>
-	ss && d.draft_summaries.find((s) => s.stage_submission_id === ss.id && s.kind === 'student');
+	ss && d.draft_summaries.find((s) => s.stage_submission_id === ss.id && s.kind === 'ai');
 
 /** Hand in one stage: one stage_submissions row, one ai_use_declarations row, one draft_summaries row. */
 export function handIn(stage: Stage, input: HandInInput): StageSubmission {
@@ -166,41 +199,69 @@ export function handIn(stage: Stage, input: HandInInput): StageSubmission {
 		description: input.description || null,
 		declared_at: at
 	});
-	demo.draft_summaries.push({ stage_submission_id: ss.id, kind: 'student', body: input.summary });
+	if (input.summary.trim()) demo.draft_summaries.push({ stage_submission_id: ss.id, kind: 'ai', body: input.summary });
 
-	if (stage.kind === 'revision') {
-		// The comments are closed by this draft: "fixed" answers point at it (revised_needs_link).
-		for (const r of demo.feedback_resolutions) {
-			r.resolved_at = at;
-			if (r.action !== 'declined') r.revised_stage_submission_id = ss.id;
-		}
+	// This draft closes the comments on the draft before it: "fixed" answers point at it
+	// (revised_needs_link). Revision 1 closes the comments on the first draft, and so on; the final
+	// closes the last round.
+	for (const r of roundOf(demo, stage.position - 1)) {
+		r.resolved_at = at;
+		if (r.action !== 'declined') r.revised_stage_submission_id = ss.id;
 	}
+	// Note every change since the last draft, from comments and the student's own (kind 'changes').
+	const changes = stage.position > 1 ? draftChanges(demo, course.stages, stage.position - 1) : null;
+	if (changes) demo.draft_summaries.push({ stage_submission_id: ss.id, kind: 'changes', body: changesText(changes) });
 	if (stage.kind === 'final') demo.submission.status = 'submitted';
 	return ss;
 }
 
-/** A comment answer is ready when it has an action and what the database needs with it. */
-export function resolutionReady(r: FeedbackResolution) {
+/**
+ * A comment answer is ready when it has an action and what the database needs with it.
+ * A fix needs an actual change: the marked words must read differently now.
+ */
+export function resolutionReady(r: FeedbackResolution, anchor: string | null = null) {
 	if (!r.action) return false;
 	if (r.action === 'declined') return r.decline_reason.trim().length >= 10;
-	return r.changed_excerpt.trim().length >= 5;
+	const text = r.changed_excerpt.trim();
+	return text.length >= 5 && text !== (anchor ?? '').trim();
 }
 
-const stageDone = (d: Demo, kind: StageKind) => !!snapshotFor(d, stageOf(kind));
-
-/** The step the student should do next, or 'done'. */
-export function currentStep(d: Demo): StepKey | 'done' {
-	if (!d.reading.saved_at) return 'read';
-	if (!stageDone(d, 'first_draft')) return 'draft';
-	if (!stageDone(d, 'revision')) return 'revise';
-	if (!stageDone(d, 'final')) return 'final';
-	if (!d.reflection.created_at) return 'reflect';
-	return 'done';
+/**
+ * Everything that changed between Draft k and the draft after it (or the working document, while
+ * the student is still revising), each labelled with the comment it answers or as their own change.
+ * null when either draft was not written in MYRACLE, because then there is no text to compare.
+ */
+export function draftChanges(d: Demo, stages: Stage[], k: number): DraftChange[] | null {
+	const before = snapshotFor(d, stages[k - 1] ?? null)?.content_text;
+	const next = snapshotFor(d, stages[k] ?? null);
+	const after = next ? next.content_text : d.document.content;
+	if (!before || !after) return null;
+	const items = feedbackRound(k);
+	const fixes = roundOf(d, k)
+		.filter((r) => r.action === 'addressed' || r.action === 'partly_addressed')
+		.map((r) => {
+			const item = items.find((i) => i.id === r.feedback_item_id);
+			return { number: item?.number ?? 0, anchor: item?.anchor_excerpt ?? '', excerpt: r.changed_excerpt };
+		});
+	return labelChanges(diffSentences(before, after), fixes);
 }
 
-export function stepNumber(d: Demo): number {
-	const order: (StepKey | 'done')[] = ['read', 'draft', 'revise', 'final', 'reflect', 'done'];
-	return order.indexOf(currentStep(d)) + 1;
+export const roundOf = (d: Demo, round: number) => d.feedback_resolutions.filter((r) => r.round === round);
+
+function stepDone(d: Demo, step: Step) {
+	if (step.key === 'read') return !!d.reading.saved_at;
+	if (step.key === 'reflect') return !!d.reflection.created_at;
+	return !!snapshotFor(d, step.stage);
+}
+
+/** The step the student should do next, or null when everything is done. */
+export function currentStep(d: Demo, steps: Step[]): Step | null {
+	return steps.find((s) => !stepDone(d, s)) ?? null;
+}
+
+/** 1 to steps.length, or steps.length + 1 when everything is done. */
+export function stepNumber(d: Demo, steps: Step[]): number {
+	return currentStep(d, steps)?.n ?? steps.length + 1;
 }
 
 export function formatDate(value: string) {

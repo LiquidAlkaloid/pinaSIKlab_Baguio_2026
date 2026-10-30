@@ -1,8 +1,11 @@
 <script lang="ts">
-	// Assignment and stage builder (#1). Nothing is saved in the prototype.
-	// Follows the schema's rules: one first draft, at least one revision, one final,
-	// and a process share of 0 to 30 percent (this screen offers 20 to 30).
-	import { AI_SCALE, assignment, schoolClass, sourceParagraphs, sourceText, stages, type StageKind } from '#lib/data.ts';
+	// Assignment and stage builder (#1). "Give to class" saves the stages and process weight to
+	// the shared course setup, so the student screens change to match. Nothing else is saved.
+	// The teacher sets how many times students revise. Every revision except the last gets
+	// comments; the last revision is the final. A process share of 0 to 30 percent is allowed
+	// by the schema; this screen offers 20 to 30.
+	import { AI_SCALE, MAX_REVISIONS, assignment, schoolClass, sourceParagraphs, sourceText, type Stage, type StageKind } from '#lib/data.ts';
+	import { course, setCourse } from '#lib/state.svelte.ts';
 
 	interface DraftStage {
 		id: number;
@@ -17,12 +20,15 @@
 	}
 
 	let nextId = 0;
+	const blank = (kind: StageKind): DraftStage => ({ id: nextId++, kind, goal: '', ai_level: 0, due: '', timed: false, minutes: 60 });
+
 	let title = $state(assignment.title);
 	let withSource = $state(true);
 	let sourceTitle = $state(sourceText.title);
 	let sourceBody = $state(sourceParagraphs.map((p) => p.body).join('\n\n'));
+	// Starts from what the class has now.
 	let list: DraftStage[] = $state(
-		stages.map((s) => ({
+		course.stages.map((s) => ({
 			id: nextId++,
 			kind: s.kind,
 			goal: s.goal ?? '',
@@ -32,35 +38,40 @@
 			minutes: 60
 		}))
 	);
-	let weight = $state(assignment.process_weight_pct);
+	let weight = $state(course.process_weight_pct);
 	let mirror = $state(true);
 	let given = $state(false);
 
-	const revisions = $derived(list.filter((s) => s.kind === 'revision'));
+	const revisions = $derived(list.length - 1);
 
-	function stageName(s: DraftStage) {
-		if (s.kind === 'first_draft') return 'First draft';
-		if (s.kind === 'final') return 'Final';
-		return revisions.length > 1 ? `Revision ${revisions.indexOf(s) + 1}` : 'Revision';
+	/** Change the number of revisions, keeping the first draft, the final and what was typed. */
+	function setRevisions(n: number) {
+		const middle = list.slice(1, -1);
+		while (middle.length < n - 1) middle.push(blank('revision'));
+		middle.length = n - 1;
+		list = [list[0], ...middle, list[list.length - 1]];
 	}
 
-	function addRevision() {
-		list.splice(list.length - 1, 0, {
-			id: nextId++,
-			kind: 'revision',
-			goal: '',
-			ai_level: 0,
-			due: '',
-			timed: false,
-			minutes: 60
-		});
+	function stageName(i: number) {
+		if (i === 0) return 'First draft';
+		return i === revisions ? `Revision ${i} · Final` : `Revision ${i}`;
 	}
 
-	function removeStage(id: number) {
-		list = list.filter((s) => s.id !== id);
+	function give() {
+		const stages: Stage[] = list.map((s, i) => ({
+			id: `stage-${i + 1}`,
+			assignment_id: assignment.id,
+			position: i + 1,
+			kind: s.kind,
+			goal: s.goal.trim() || null,
+			ai_level: s.ai_level,
+			due_at: s.due ? `${s.due}T23:59:00+08:00` : null
+		}));
+		setCourse(stages, weight);
+		given = true;
 	}
 
-	const ready = $derived(title.trim() && (!withSource || sourceBody.trim()) && revisions.length > 0);
+	const ready = $derived(title.trim() && (!withSource || sourceBody.trim()));
 	const studentSteps = $derived(list.length + (withSource ? 1 : 0) + 1);
 </script>
 
@@ -99,10 +110,17 @@
 	</section>
 
 	<section class="card stack">
-		<h2><span class="q">2</span> What drafts will they hand in?</h2>
+		<h2><span class="q">2</span> How many times can students revise?</h2>
+		<div class="counts" role="radiogroup" aria-label="Number of revisions">
+			{#each Array(MAX_REVISIONS) as _, i (i)}
+				<button class="count" role="radio" aria-checked={revisions === i + 1} onclick={() => setRevisions(i + 1)}>{i + 1}</button>
+			{/each}
+		</div>
 		<p class="muted small">
-			A first draft, at least one revision, and a final. Give each a one-line goal so students know
-			what to work on. A “See how you did” step is added at the end automatically.
+			{revisions === 1
+				? 'Students hand in a first draft, get your comments once, and their one revision is the final.'
+				: `Students hand in a first draft, then revise ${revisions} times. You comment on the first draft and on each revision except the last; the last revision is the final.`}
+			Give each draft a one-line goal. A “See how you did” step is added at the end automatically.
 		</p>
 
 		<ol class="steps">
@@ -110,11 +128,9 @@
 				<li class="step">
 					<div class="step-top">
 						<span class="num">{i + 1}</span>
-						<span class="step-name">{stageName(s)}</span>
-						{#if s.kind === 'revision'}
-							<button class="btn btn-ghost btn-small" onclick={() => removeStage(s.id)} disabled={revisions.length === 1}
-								>Remove</button
-							>
+						<span class="step-name">{stageName(i)}</span>
+						{#if i > 0}
+							<span class="pill {i === revisions ? 'pill-ok' : 'pill-gold'}">{i === revisions ? 'No comments after' : 'You comment after'}</span>
 						{/if}
 					</div>
 					<div class="step-grid">
@@ -148,7 +164,6 @@
 				</li>
 			{/each}
 		</ol>
-		<button class="btn btn-ghost" onclick={addRevision}>Add another revision</button>
 	</section>
 
 	<section class="card stack">
@@ -173,11 +188,15 @@
 	{#if given}
 		<div class="card done stack">
 			<span class="pill pill-ok">Given to {schoolClass.name}</span>
-			<p><strong>{title}</strong> is now on every student’s home screen with {studentSteps} steps.</p>
+			<p>
+				<strong>{title}</strong> is now on every student’s home screen with {studentSteps} steps and
+				{revisions} revision{revisions === 1 ? '' : 's'}.
+			</p>
+			<p class="small muted">Demo: Bea’s walkthrough starts over with the new steps. Open “Student view” to see it.</p>
 			<a class="btn btn-ghost" href="/teacher">Back to teacher home</a>
 		</div>
 	{:else}
-		<button class="btn btn-primary btn-block" disabled={!ready} onclick={() => (given = true)}>Give to class</button>
+		<button class="btn btn-primary btn-block" disabled={!ready} onclick={give}>Give to class</button>
 	{/if}
 </div>
 
@@ -236,6 +255,31 @@
 	.step-name {
 		flex: 1;
 		font-weight: 700;
+	}
+	.counts {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.count {
+		width: 52px;
+		height: 52px;
+		border-radius: 50%;
+		border: 1.5px solid var(--line);
+		background: var(--surface);
+		font: inherit;
+		font-size: 1.15rem;
+		font-weight: 700;
+		color: var(--ink-2);
+		cursor: pointer;
+		transition: transform 160ms var(--ease);
+	}
+	.count:active {
+		transform: scale(0.97);
+	}
+	.count[aria-checked='true'] {
+		background: var(--brand);
+		border-color: var(--brand);
+		color: #fff;
 	}
 	.step-grid {
 		display: grid;

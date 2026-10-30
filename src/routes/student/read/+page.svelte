@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import StepHeader from '#lib/components/StepHeader.svelte';
-	import { sourceParagraphs, sourceText, steps } from '#lib/data.ts';
-	import { demo } from '#lib/state.svelte.ts';
+	import { sourceParagraphs, sourceText } from '#lib/data.ts';
+	import { courseSteps, demo } from '#lib/state.svelte.ts';
 
 	const MIN_WORDS = 30;
-	const step = steps[0];
+	const step = $derived(courseSteps()[0]);
 	const words = $derived(demo.reading.summary.trim().split(/\s+/).filter(Boolean).length);
 
 	function save() {
@@ -14,7 +14,7 @@
 	}
 </script>
 
-<svelte:head><title>Step 1: Read · MYRACLE</title></svelte:head>
+<svelte:head><title>Read · MYRACLE</title></svelte:head>
 
 <StepHeader n={1} title="Read the article first" next="write your first draft" />
 

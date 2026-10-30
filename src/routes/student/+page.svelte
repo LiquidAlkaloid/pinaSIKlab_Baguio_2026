@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { assignment, feedbackItems, firstName, otherWork, schoolClass, steps, student } from '#lib/data.ts';
-	import { currentStep, demo, formatDate, resetDemo, stepNumber } from '#lib/state.svelte.ts';
+	import RevisionMeter from '#lib/components/RevisionMeter.svelte';
+	import { assignment, feedbackRound, firstName, otherWork, revisionCount, schoolClass, student } from '#lib/data.ts';
+	import { course, courseSteps, currentStep, demo, formatDate, resetDemo, stepNumber } from '#lib/state.svelte.ts';
 
-	const step = $derived(currentStep(demo));
-	const next = $derived(steps.find((s) => s.key === step));
-	const n = $derived(stepNumber(demo));
+	const steps = $derived(courseSteps());
+	const next = $derived(currentStep(demo, steps));
+	const n = $derived(stepNumber(demo, steps));
+	const total = $derived(revisionCount(course.stages));
 </script>
 
 <svelte:head><title>Home · MYRACLE</title></svelte:head>
@@ -21,7 +23,7 @@
 	<p class="kicker">Up next · {schoolClass.name}</p>
 	<h2>{assignment.title}</h2>
 
-	<ol class="track" aria-label="Progress">
+	<ol class="track" aria-label="Progress" style="grid-template-columns: repeat({steps.length}, 1fr)">
 		{#each steps as s (s.key)}
 			<li class:done={s.n < n} class:current={s.n === n}>{s.name}</li>
 		{/each}
@@ -29,16 +31,19 @@
 
 	{#if next}
 		<div class="next">
-			<p class="small muted">Step {next.n} of 5 · due {formatDate(next.due_at)}</p>
+			<p class="small muted">Step {next.n} of {steps.length}{next.due_at ? ` · due ${formatDate(next.due_at)}` : ""}</p>
 			<p class="action">{next.action}</p>
-			{#if next.key === 'revise'}
-				<p class="small"><span class="pill pill-gold">Your teacher left {feedbackItems.length} comments</span></p>
+			{#if next.revision}
+				<p class="small"><span class="pill pill-gold">Your teacher left {feedbackRound(next.revision).length} comments</span></p>
 			{/if}
 		</div>
+		{#if next.stage}
+			<RevisionMeter current={next.revision ?? 0} {total} />
+		{/if}
 		<a class="btn btn-primary btn-block" href={next.href}>{next.cta}</a>
 	{:else}
 		<div class="next">
-			<p class="action">All 5 steps done.</p>
+			<p class="action">All {steps.length} steps done.</p>
 			<p class="small muted">Your goal for next time: “{demo.next_goal}”</p>
 		</div>
 		<a class="btn btn-ghost btn-block" href="/student/mirror">See how you did</a>
@@ -82,7 +87,6 @@
 		margin: 0;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
 		gap: 0.3rem;
 		font-size: 0.72rem;
 		color: var(--ink-3);
