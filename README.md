@@ -2,10 +2,18 @@
 
 Clickable prototype for PSC XI. SvelteKit 3 + TypeScript, fake data only (no database, no login). The fake data is shaped like the database schema (v4): types are named after tables and fields after columns.
 
+## First time on a new computer
+
+The setup script checks for Node.js (22.17 or newer), installs Node.js 24 LTS if it is missing or too old, then installs the project's packages.
+
+- **Mac:** open Terminal in this folder and run `bash setup.sh`. macOS asks for your password only if it needs to install Node.js.
+- **Windows:** double-click `setup.cmd`. Click Yes if Windows asks for permission to install Node.js.
+
+At the end it offers to start the app. Run it again any time packages change (after a `git pull` that touches `package.json`).
+
 ## Run it
 
 ```bash
-npm install
 npm run dev        # open the link it prints
 ```
 

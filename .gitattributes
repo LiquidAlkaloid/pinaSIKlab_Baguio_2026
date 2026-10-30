@@ -1,0 +1,4 @@
+# Keep each script in the line endings its system expects.
+*.sh  text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
