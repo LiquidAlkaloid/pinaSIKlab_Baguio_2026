@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import Logo from '#lib/components/Logo.svelte';
-	import { assignment } from '#lib/data.ts';
+	import { teacher } from '#lib/data.ts';
 
 	let { children } = $props();
 </script>
@@ -14,7 +14,7 @@
 			<a href="/teacher/new" aria-current={page.url.pathname === '/teacher/new' ? 'page' : undefined}>New assignment</a>
 		</nav>
 		<div class="who">
-			<span class="small muted">{assignment.teacher}</span>
+			<span class="small muted">{teacher.full_name}</span>
 			<a class="btn btn-ghost btn-small" href="/student">Student view</a>
 		</div>
 	</header>

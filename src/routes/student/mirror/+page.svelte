@@ -1,49 +1,61 @@
 <script lang="ts">
-	// Process Mirror (#10): the student sees the same process report their teacher saw.
+	// Process Mirror (#7): the student sees the same process report their teacher saw.
 	// Only their own work. No class averages, no rankings, no other students.
 	import Locked from '#lib/components/Locked.svelte';
 	import StepHeader from '#lib/components/StepHeader.svelte';
-	import { AI_USES, assignment, type AiUse } from '#lib/data.ts';
-	import { demo, formatDate, onTime } from '#lib/state.svelte.ts';
+	import { AI_USES, assignment, criterionScores, feedbackItems, grade, rubricCriteria, steps } from '#lib/data.ts';
+	import { declarationFor, demo, formatDate, onTime, snapshotFor, summaryFor, type AiUseDeclaration } from '#lib/state.svelte.ts';
 
-	const steps = assignment.steps;
+	const stageSteps = steps.filter((s) => s.stage);
+	const final = $derived(snapshotFor(demo, steps[3].stage));
 
 	const timeline = $derived([
-		{ step: steps[0], at: demo.readAt },
-		{ step: steps[1], at: demo.draft.at },
-		{ step: steps[2], at: demo.revisedAt },
-		{ step: steps[3], at: demo.final.at }
+		{ step: steps[0], at: demo.reading.saved_at },
+		...stageSteps.map((step) => ({ step, at: snapshotFor(demo, step.stage)?.submitted_at ?? null }))
 	]);
 
 	const counts = $derived({
-		fixed: demo.answers.filter((a) => a.status === 'fixed').length,
-		partly: demo.answers.filter((a) => a.status === 'partly').length,
-		kept: demo.answers.filter((a) => a.status === 'kept').length
+		addressed: demo.feedback_resolutions.filter((r) => r.action === 'addressed').length,
+		partly: demo.feedback_resolutions.filter((r) => r.action === 'partly_addressed').length,
+		declined: demo.feedback_resolutions.filter((r) => r.action === 'declined').length
 	});
-	const total = assignment.feedback.length;
+	const total = feedbackItems.length;
 
 	const changes = $derived(
-		assignment.feedback.map((item, i) => {
-			const a = demo.answers[i];
-			if (a.status === 'kept') {
-				return { n: item.n, text: `Kept ¶${item.paragraph} the same: “${a.reason}”`, kind: 'kept' };
-			}
-			const what = a.note.trim() || `Changed in response to: ${item.comment}`;
+		feedbackItems.map((item, i) => {
+			const r = demo.feedback_resolutions[i];
 			return {
-				n: item.n,
-				text: `¶${a.paragraph}: ${what}`,
-				kind: a.status === 'partly' ? 'partly' : 'fixed'
+				n: item.number,
+				action: r.action,
+				text: r.action === 'declined' ? `Kept it the same: “${r.decline_reason}”` : r.changed_excerpt
 			};
 		})
 	);
 
-	const aiLabel = (v: AiUse | null) => AI_USES.find((u) => u.value === v)?.label ?? 'Not answered';
+	const drafts = $derived(
+		stageSteps.map((step) => {
+			const ss = snapshotFor(demo, step.stage);
+			return { step, summary: summaryFor(demo, ss)?.body, ai: declarationFor(demo, ss) };
+		})
+	);
 
-	let saved = $state(!!demo.reflectedAt);
-	const canSave = $derived(demo.goal.trim().length > 5 && demo.reflection.changed.trim().length > 5);
+	const aiLabel = (level: number) => AI_USES.find((u) => u.level === level)?.label ?? 'Not answered';
+	function aiText(ai: AiUseDeclaration | undefined) {
+		if (!ai) return 'Not answered';
+		const tools = ai.tools_used.length ? ` (${ai.tools_used.join(', ')})` : '';
+		return aiLabel(ai.level_used) + tools + (ai.description ? `: “${ai.description}”` : '');
+	}
+	const draftName = (key: string) => (key === 'draft' ? 'Draft 1' : key === 'revise' ? 'Draft 2' : 'Final');
+
+	const processCriteria = rubricCriteria
+		.filter((c) => c.kind === 'process')
+		.map((c) => ({ ...c, scored: criterionScores.find((s) => s.criterion_id === c.id) }));
+
+	let saved = $state(!!demo.reflection.created_at);
+	const canSave = $derived(demo.next_goal.trim().length > 5 && demo.reflection.responses.changed_most.trim().length > 5);
 
 	function save() {
-		demo.reflectedAt = Date.now();
+		demo.reflection.created_at = new Date().toISOString();
 		saved = true;
 	}
 </script>
@@ -52,7 +64,7 @@
 
 <StepHeader n={5} title="How your process went" />
 
-{#if !demo.final.at}
+{#if !final}
 	<Locked what="Hand in your final essay first." href="/student/final" />
 {:else}
 	<div class="card banner">
@@ -65,10 +77,10 @@
 	<section class="card stack grade">
 		<div>
 			<p class="small muted">{assignment.title}</p>
-			<p class="big">{assignment.finalGrade}</p>
+			<p class="big">{grade.final_score}</p>
 		</div>
 		<p class="small muted">
-			Essay {100 - assignment.processWeight}% · How you worked on it {assignment.processWeight}%
+			Essay {grade.output_score} ({100 - assignment.process_weight_pct}%) · How you worked on it {grade.process_score} ({assignment.process_weight_pct}%)
 		</p>
 	</section>
 
@@ -76,12 +88,12 @@
 		<h2><span class="sec">1</span> Your steps</h2>
 		<ol class="timeline">
 			{#each timeline as t (t.step.key)}
-				{@const ok = onTime(t.at, t.step.due)}
+				{@const ok = onTime(t.at, t.step.due_at)}
 				<li>
 					<span class="tdot" class:late={ok === false}></span>
 					<span class="tname">{t.step.name}</span>
 					<span class="small muted">
-						{t.at ? formatDate(t.at) : '—'}{#if ok !== null} · {ok ? 'on time' : 'late'}{/if}
+						{t.at ? formatDate(t.at) : '—'}{ok === null ? '' : ok ? ' · on time' : ' · late'}
 					</span>
 				</li>
 			{/each}
@@ -90,25 +102,31 @@
 
 	<section class="card stack">
 		<h2><span class="sec">2</span> How you answered {total} comments</h2>
-		<div class="bar" role="img" aria-label="{counts.fixed} fixed, {counts.partly} partly fixed, {counts.kept} kept with a reason">
-			<span class="seg fixed" style="flex: {counts.fixed}"></span>
+		<div class="bar" role="img" aria-label="{counts.addressed} fixed, {counts.partly} partly fixed, {counts.declined} kept with a reason">
+			<span class="seg fixed" style="flex: {counts.addressed}"></span>
 			<span class="seg partly" style="flex: {counts.partly}"></span>
-			<span class="seg kept" style="flex: {counts.kept}"></span>
+			<span class="seg kept" style="flex: {counts.declined}"></span>
 		</div>
 		<p class="small legend">
-			<span><i class="key fixed"></i>Fixed {counts.fixed}</span>
+			<span><i class="key fixed"></i>Fixed {counts.addressed}</span>
 			<span><i class="key partly"></i>Partly {counts.partly}</span>
-			<span><i class="key kept"></i>Kept with a reason {counts.kept}</span>
+			<span><i class="key kept"></i>Kept with a reason {counts.declined}</span>
 		</p>
 	</section>
 
 	<section class="card stack">
 		<h2><span class="sec">3</span> What changed between your drafts</h2>
+		<dl class="ai">
+			{#each drafts.slice(1) as d (d.step.key)}
+				<dt>{draftName(d.step.key)}</dt>
+				<dd>“{d.summary}”</dd>
+			{/each}
+		</dl>
 		<ul class="changes">
 			{#each changes as c (c.n)}
-				<li class={c.kind}>
+				<li class={c.action}>
 					<span>{c.text}</span>
-					<span class="small muted">comment {c.n}{c.kind === 'partly' ? ', partly' : ''}</span>
+					<span class="small muted">comment {c.n}{c.action === 'partly_addressed' ? ', partly' : ''}</span>
 				</li>
 			{/each}
 		</ul>
@@ -119,25 +137,28 @@
 		<dl class="ai">
 			<dt>Read</dt>
 			<dd>Summary written in MYRACLE, no AI</dd>
-			<dt>Draft</dt>
-			<dd>{aiLabel(demo.draft.ai)}{#if demo.draft.aiNote}: “{demo.draft.aiNote}”{/if}</dd>
-			<dt>Final</dt>
-			<dd>{aiLabel(demo.final.ai)}{#if demo.final.aiNote}: “{demo.final.aiNote}”{/if}</dd>
+			{#each drafts as d (d.step.key)}
+				<dt>{draftName(d.step.key)}</dt>
+				<dd>
+					{aiText(d.ai)}
+				</dd>
+			{/each}
 		</dl>
 	</section>
 
 	<section class="card stack">
 		<h2><span class="sec">5</span> Your teacher’s rubric for how you worked</h2>
-		{#each assignment.processScores as c (c.name)}
+		{#each processCriteria as c (c.id)}
+			{@const score = c.scored?.score ?? 0}
 			<div class="crit">
 				<div class="crit-row">
 					<span class="crit-name">{c.name}</span>
-					<span class="boxes" aria-label="{c.score} of {c.max}">
-						{#each Array(c.max) as _, i (i)}<i class:on={i < c.score}></i>{/each}
+					<span class="boxes" aria-label="{score} of {c.max_points}">
+						{#each Array(c.max_points) as _, i (i)}<i class:on={i < score}></i>{/each}
 					</span>
-					<span class="small muted">{c.score} of {c.max}</span>
+					<span class="small muted">{score} of {c.max_points}</span>
 				</div>
-				<p class="pen note">{c.note}</p>
+				{#if c.scored?.comment}<p class="pen note">{c.scored.comment}</p>{/if}
 			</div>
 		{/each}
 	</section>
@@ -146,21 +167,21 @@
 		<h2>Your turn: look back</h2>
 		<label class="field">
 			What changed most between your drafts, and why?
-			<textarea rows="3" bind:value={demo.reflection.changed}></textarea>
+			<textarea rows="3" bind:value={demo.reflection.responses.changed_most}></textarea>
 		</label>
 		<label class="field">
 			Which comment was hardest to act on?
-			<textarea rows="2" bind:value={demo.reflection.hardest}></textarea>
+			<textarea rows="2" bind:value={demo.reflection.responses.hardest_item}></textarea>
 		</label>
 		<label class="field">
 			Where did your score surprise you?
-			<textarea rows="2" bind:value={demo.reflection.surprise}></textarea>
+			<textarea rows="2" bind:value={demo.reflection.responses.score_surprise}></textarea>
 		</label>
 		<div class="goal stack goal-box">
 			<label class="field" for="goal">
 				<span class="goal-label">One goal for next time</span>
 			</label>
-			<input id="goal" type="text" bind:value={demo.goal} placeholder="Example: Use two paragraphs from the article as evidence." />
+			<input id="goal" type="text" bind:value={demo.next_goal} placeholder="Example: Use two paragraphs from the article as evidence." />
 			<p class="small muted">You will see this at the top of your next assignment. Your teacher sees it too.</p>
 		</div>
 		{#if saved}
@@ -278,10 +299,10 @@
 		padding-left: 0.75rem;
 		border-left: 3px solid var(--ok);
 	}
-	.changes li.partly {
+	.changes li.partly_addressed {
 		border-color: var(--partly);
 	}
-	.changes li.kept {
+	.changes li.declined {
 		border-color: var(--kept);
 	}
 	.ai {
@@ -316,7 +337,7 @@
 		gap: 3px;
 	}
 	.boxes i {
-		width: 18px;
+		width: 14px;
 		height: 12px;
 		border-radius: 3px;
 		background: var(--line);

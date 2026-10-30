@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Logo from '#lib/components/Logo.svelte';
-	import { student } from '#lib/data.ts';
+	import { initials, student } from '#lib/data.ts';
 
 	let { children } = $props();
 </script>
@@ -8,7 +8,7 @@
 <div class="phone">
 	<header class="top">
 		<a href="/student" aria-label="Student home"><Logo size={26} /></a>
-		<a class="avatar" href="/" title="Switch user">{student.initials}</a>
+		<a class="avatar" href="/" title="Switch user">{initials(student)}</a>
 	</header>
 	<main class="stack">
 		{@render children()}

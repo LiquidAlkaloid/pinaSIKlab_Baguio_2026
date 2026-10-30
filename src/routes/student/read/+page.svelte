@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import StepHeader from '#lib/components/StepHeader.svelte';
-	import { assignment } from '#lib/data.ts';
+	import { sourceParagraphs, sourceText, steps } from '#lib/data.ts';
 	import { demo } from '#lib/state.svelte.ts';
 
 	const MIN_WORDS = 30;
-	const step = assignment.steps[0];
-	const words = $derived(demo.summary.trim().split(/\s+/).filter(Boolean).length);
+	const step = steps[0];
+	const words = $derived(demo.reading.summary.trim().split(/\s+/).filter(Boolean).length);
 
 	function save() {
-		demo.readAt = Date.now();
+		demo.reading.saved_at = new Date().toISOString();
 		goto('/student/draft');
 	}
 </script>
@@ -27,26 +27,26 @@
 </div>
 
 <article class="card source">
-	<h2>{assignment.source.title}</h2>
-	<p class="small muted byline">{assignment.source.byline}</p>
-	{#each assignment.source.paragraphs as p, i (i)}
-		<p class="para"><span class="pnum">¶{i + 1}</span>{p}</p>
+	<h2>{sourceText.title}</h2>
+	<p class="small muted byline">{sourceText.citation}</p>
+	{#each sourceParagraphs as p (p.para_no)}
+		<p class="para"><span class="pnum">¶{p.para_no}</span>{p.body}</p>
 	{/each}
 </article>
 
 <section class="card stack">
 	<label class="field" for="summary">Your summary</label>
 	<p class="muted small">What is the article saying? You will cite its paragraphs (¶) in your essay.</p>
-	<textarea id="summary" rows="7" bind:value={demo.summary} placeholder="The article says that…"></textarea>
+	<textarea id="summary" rows="7" bind:value={demo.reading.summary} placeholder="The article says that…"></textarea>
 	<p class="small" class:muted={words < MIN_WORDS}>
-		{words} words{#if words < MIN_WORDS} · write at least {MIN_WORDS}{:else} · looks good{/if}
+		{words} words · {words < MIN_WORDS ? `write at least ${MIN_WORDS}` : 'looks good'}
 	</p>
 </section>
 
 <button class="btn btn-primary btn-block" disabled={words < MIN_WORDS} onclick={save}>
-	{demo.readAt ? 'Save changes' : 'Save summary'}
+	{demo.reading.saved_at ? 'Save changes' : 'Save summary'}
 </button>
-<p class="muted small center">Due {new Date(step.due).toLocaleDateString('en-PH', { month: 'long', day: 'numeric' })}</p>
+<p class="muted small center">Due {new Date(step.due_at).toLocaleDateString('en-PH', { month: 'long', day: 'numeric' })}</p>
 
 <style>
 	.how ol {

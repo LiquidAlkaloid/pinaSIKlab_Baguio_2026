@@ -1,94 +1,78 @@
 <script lang="ts">
 	// Assignment and stage builder (#1). Nothing is saved in the prototype.
-	import { AI_LEVELS, assignment, type AiLevel } from '#lib/data.ts';
+	// Follows the schema's rules: one first draft, at least one revision, one final,
+	// and a process share of 0 to 30 percent (this screen offers 20 to 30).
+	import { AI_SCALE, assignment, schoolClass, sourceParagraphs, sourceText, stages, type StageKind } from '#lib/data.ts';
 
-	type Band = 'jhs' | 'shs' | 'uni';
-
-	interface DraftStep {
+	interface DraftStage {
 		id: number;
-		name: string;
+		kind: StageKind;
 		goal: string;
-		ai: AiLevel;
+		ai_level: number;
+		/** yyyy-mm-dd for the date input; saved as stages.due_at. */
 		due: string;
+		/** Not in the schema yet: see README "Gaps". */
 		timed: boolean;
 		minutes: number;
 	}
 
-	const BANDS: Record<Band, { label: string; weight: number; steps: Omit<DraftStep, 'id'>[] }> = {
-		jhs: {
-			label: 'Junior high',
-			weight: 20,
-			steps: [
-				{ name: 'Read and summarise', goal: 'Say what the text means in your own words.', ai: 'none', due: '2026-11-04', timed: true, minutes: 40 },
-				{ name: 'Draft', goal: 'Ideas and one clear claim.', ai: 'none', due: '2026-11-07', timed: false, minutes: 60 },
-				{ name: 'Final', goal: 'Clarity and correctness.', ai: 'edit', due: '2026-11-12', timed: false, minutes: 60 }
-			]
-		},
-		shs: {
-			label: 'Senior high',
-			weight: 25,
-			steps: [
-				{ name: 'Read and summarise', goal: 'Understand the source before writing.', ai: 'none', due: '2026-11-03', timed: false, minutes: 60 },
-				{ name: 'Draft 1', goal: 'Ideas and a clear position.', ai: 'ideas', due: '2026-11-06', timed: true, minutes: 60 },
-				{ name: 'Revision', goal: 'Structure and evidence.', ai: 'edit', due: '2026-11-10', timed: false, minutes: 60 },
-				{ name: 'Final', goal: 'Clarity and correctness.', ai: 'edit', due: '2026-11-13', timed: false, minutes: 60 }
-			]
-		},
-		uni: {
-			label: 'University',
-			weight: 25,
-			steps: assignment.steps
-				.filter((s) => s.key !== 'reflect')
-				.map((s) => ({ name: s.name, goal: s.goal, ai: s.ai, due: s.due, timed: false, minutes: 60 }))
-		}
-	};
-
 	let nextId = 0;
-	const withIds = (steps: Omit<DraftStep, 'id'>[]) => steps.map((s) => ({ ...s, id: nextId++ }));
-
-	let band: Band = $state('uni');
 	let title = $state(assignment.title);
-	let sourceTitle = $state(assignment.source.title);
-	let sourceText = $state(assignment.source.paragraphs.join('\n\n'));
-	let steps: DraftStep[] = $state(withIds(BANDS.uni.steps));
-	let weight = $state(BANDS.uni.weight);
+	let withSource = $state(true);
+	let sourceTitle = $state(sourceText.title);
+	let sourceBody = $state(sourceParagraphs.map((p) => p.body).join('\n\n'));
+	let list: DraftStage[] = $state(
+		stages.map((s) => ({
+			id: nextId++,
+			kind: s.kind,
+			goal: s.goal ?? '',
+			ai_level: s.ai_level,
+			due: s.due_at?.slice(0, 10) ?? '',
+			timed: false,
+			minutes: 60
+		}))
+	);
+	let weight = $state(assignment.process_weight_pct);
 	let mirror = $state(true);
 	let given = $state(false);
 
-	function pickBand(b: Band) {
-		band = b;
-		steps = withIds(BANDS[b].steps);
-		weight = BANDS[b].weight;
+	const revisions = $derived(list.filter((s) => s.kind === 'revision'));
+
+	function stageName(s: DraftStage) {
+		if (s.kind === 'first_draft') return 'First draft';
+		if (s.kind === 'final') return 'Final';
+		return revisions.length > 1 ? `Revision ${revisions.indexOf(s) + 1}` : 'Revision';
 	}
 
-	function addStep() {
-		steps.push({ id: nextId++, name: 'New step', goal: '', ai: 'none', due: '', timed: false, minutes: 60 });
+	function addRevision() {
+		list.splice(list.length - 1, 0, {
+			id: nextId++,
+			kind: 'revision',
+			goal: '',
+			ai_level: 0,
+			due: '',
+			timed: false,
+			minutes: 60
+		});
 	}
 
-	function removeStep(id: number) {
-		steps = steps.filter((s) => s.id !== id);
+	function removeStage(id: number) {
+		list = list.filter((s) => s.id !== id);
 	}
 
-	const ready = $derived(title.trim() && sourceText.trim() && steps.length > 0);
+	const ready = $derived(title.trim() && (!withSource || sourceBody.trim()) && revisions.length > 0);
+	const studentSteps = $derived(list.length + (withSource ? 1 : 0) + 1);
 </script>
 
 <svelte:head><title>New assignment · MYRACLE</title></svelte:head>
 
 <div class="wrap stack">
 	<div>
-		<p class="small muted">{assignment.course} · {assignment.section}</p>
+		<p class="small muted">{schoolClass.name}</p>
 		<h1>New assignment</h1>
 	</div>
 
 	<section class="card stack">
-		<p class="small muted">Who is this for? This fills in sensible steps you can change.</p>
-		<div class="bands" role="radiogroup" aria-label="Class level">
-			{#each Object.entries(BANDS) as [key, b] (key)}
-				<button class="band" role="radio" aria-checked={band === key} onclick={() => pickBand(key as Band)}>
-					{b.label}
-				</button>
-			{/each}
-		</div>
 		<label class="field">
 			Assignment title
 			<input type="text" bind:value={title} />
@@ -97,31 +81,41 @@
 
 	<section class="card stack">
 		<h2><span class="q">1</span> What will students read?</h2>
-		<p class="muted small">Every assignment starts from a text. Students sum it up before they write.</p>
-		<label class="field">
-			Title of the text
-			<input type="text" bind:value={sourceTitle} />
+		<label class="toggle">
+			<input type="checkbox" bind:checked={withSource} />
+			<span>Students read a text and sum it up before they write</span>
 		</label>
-		<label class="field">
-			Paste the text <span class="muted small">(or upload a file)</span>
-			<textarea rows="6" bind:value={sourceText}></textarea>
-		</label>
-		{#if band === 'jhs'}
-			<p class="tip small">Tip: pick a short text the class can almost read on its own. A text that is too hard pushes students back to chatbots.</p>
+		{#if withSource}
+			<label class="field">
+				Title of the text
+				<input type="text" bind:value={sourceTitle} />
+			</label>
+			<label class="field">
+				Paste the text <span class="muted small">(or upload a file)</span>
+				<textarea rows="6" bind:value={sourceBody}></textarea>
+			</label>
+			<p class="muted small">Each paragraph gets a number (¶) so students can cite it.</p>
 		{/if}
 	</section>
 
 	<section class="card stack">
-		<h2><span class="q">2</span> What steps will they go through?</h2>
-		<p class="muted small">Give each step a one-line goal so students know what to work on. A “See how you did” step is added at the end automatically.</p>
+		<h2><span class="q">2</span> What drafts will they hand in?</h2>
+		<p class="muted small">
+			A first draft, at least one revision, and a final. Give each a one-line goal so students know
+			what to work on. A “See how you did” step is added at the end automatically.
+		</p>
 
 		<ol class="steps">
-			{#each steps as s, i (s.id)}
+			{#each list as s, i (s.id)}
 				<li class="step">
 					<div class="step-top">
 						<span class="num">{i + 1}</span>
-						<input class="step-name" type="text" bind:value={s.name} aria-label="Step {i + 1} name" />
-						<button class="btn btn-ghost btn-small" onclick={() => removeStep(s.id)} disabled={steps.length === 1}>Remove</button>
+						<span class="step-name">{stageName(s)}</span>
+						{#if s.kind === 'revision'}
+							<button class="btn btn-ghost btn-small" onclick={() => removeStage(s.id)} disabled={revisions.length === 1}
+								>Remove</button
+							>
+						{/if}
 					</div>
 					<div class="step-grid">
 						<label class="field goal-field">
@@ -130,8 +124,8 @@
 						</label>
 						<label class="field">
 							AI allowed
-							<select bind:value={s.ai}>
-								{#each Object.entries(AI_LEVELS) as [k, v] (k)}<option value={k}>{v.label}</option>{/each}
+							<select bind:value={s.ai_level}>
+								{#each AI_SCALE as label, level (level)}<option value={level}>{label}</option>{/each}
 							</select>
 						</label>
 						<label class="field">
@@ -154,7 +148,7 @@
 				</li>
 			{/each}
 		</ol>
-		<button class="btn btn-ghost" onclick={addStep}>Add a step</button>
+		<button class="btn btn-ghost" onclick={addRevision}>Add another revision</button>
 	</section>
 
 	<section class="card stack">
@@ -178,8 +172,8 @@
 
 	{#if given}
 		<div class="card done stack">
-			<span class="pill pill-ok">Given to {assignment.section}</span>
-			<p><strong>{title}</strong> is now on every student’s home screen with {steps.length + 1} steps.</p>
+			<span class="pill pill-ok">Given to {schoolClass.name}</span>
+			<p><strong>{title}</strong> is now on every student’s home screen with {studentSteps} steps.</p>
 			<a class="btn btn-ghost" href="/teacher">Back to teacher home</a>
 		</div>
 	{:else}
@@ -193,31 +187,6 @@
 		margin: 0 auto;
 		gap: 1.25rem;
 	}
-	.bands {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
-	.band {
-		flex: 1 1 8rem;
-		min-height: 44px;
-		border-radius: 999px;
-		border: 1.5px solid var(--line);
-		background: var(--surface);
-		font: inherit;
-		font-weight: 700;
-		color: var(--ink-2);
-		cursor: pointer;
-		transition: transform 160ms var(--ease);
-	}
-	.band:active {
-		transform: scale(0.97);
-	}
-	.band[aria-checked='true'] {
-		background: var(--brand);
-		border-color: var(--brand);
-		color: #fff;
-	}
 	.q {
 		display: inline-grid;
 		place-items: center;
@@ -229,11 +198,6 @@
 		color: #8a5d00;
 		font-size: 0.9rem;
 		vertical-align: 2px;
-	}
-	.tip {
-		background: var(--gold-soft);
-		border-radius: var(--radius-sm);
-		padding: 0.6rem 0.75rem;
 	}
 	.steps {
 		list-style: none;
@@ -270,6 +234,7 @@
 		font-size: 0.85rem;
 	}
 	.step-name {
+		flex: 1;
 		font-weight: 700;
 	}
 	.step-grid {

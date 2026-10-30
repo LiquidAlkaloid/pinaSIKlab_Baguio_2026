@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { assignment } from '#lib/data.ts';
+	import { steps } from '#lib/data.ts';
 
 	let { n, title, next }: { n: number; title: string; next?: string } = $props();
-	const steps = assignment.steps;
 </script>
 
 <header class="step-header">

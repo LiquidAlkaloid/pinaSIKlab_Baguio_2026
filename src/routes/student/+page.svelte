@@ -1,45 +1,45 @@
 <script lang="ts">
-	import { assignment, otherWork, student } from '#lib/data.ts';
+	import { assignment, feedbackItems, firstName, otherWork, schoolClass, steps, student } from '#lib/data.ts';
 	import { currentStep, demo, formatDate, resetDemo, stepNumber } from '#lib/state.svelte.ts';
 
 	const step = $derived(currentStep(demo));
-	const next = $derived(assignment.steps.find((s) => s.key === step));
+	const next = $derived(steps.find((s) => s.key === step));
 	const n = $derived(stepNumber(demo));
 </script>
 
 <svelte:head><title>Home · MYRACLE</title></svelte:head>
 
 <div class="stack hello">
-	<h1>Hi, {student.first}</h1>
+	<h1>Hi, {firstName(student)}</h1>
 	<div class="goal">
 		<p class="goal-label">Your goal from last time</p>
-		<p>“{demo.lastGoal}”</p>
+		<p>“{demo.latest_goal}”</p>
 	</div>
 </div>
 
 <section class="card up-next stack">
-	<p class="kicker">Up next · {assignment.course}</p>
+	<p class="kicker">Up next · {schoolClass.name}</p>
 	<h2>{assignment.title}</h2>
 
 	<ol class="track" aria-label="Progress">
-		{#each assignment.steps as s (s.key)}
+		{#each steps as s (s.key)}
 			<li class:done={s.n < n} class:current={s.n === n}>{s.name}</li>
 		{/each}
 	</ol>
 
 	{#if next}
 		<div class="next">
-			<p class="small muted">Step {next.n} of 5 · due {formatDate(next.due)}</p>
+			<p class="small muted">Step {next.n} of 5 · due {formatDate(next.due_at)}</p>
 			<p class="action">{next.action}</p>
 			{#if next.key === 'revise'}
-				<p class="small"><span class="pill pill-gold">Your teacher left {assignment.feedback.length} comments</span></p>
+				<p class="small"><span class="pill pill-gold">Your teacher left {feedbackItems.length} comments</span></p>
 			{/if}
 		</div>
 		<a class="btn btn-primary btn-block" href={next.href}>{next.cta}</a>
 	{:else}
 		<div class="next">
 			<p class="action">All 5 steps done.</p>
-			<p class="small muted">Your goal for next time: “{demo.goal}”</p>
+			<p class="small muted">Your goal for next time: “{demo.next_goal}”</p>
 		</div>
 		<a class="btn btn-ghost btn-block" href="/student/mirror">See how you did</a>
 	{/if}

@@ -1,105 +1,92 @@
 <script lang="ts">
-	// Feedback Uptake Map (#2): every teacher comment needs an answer.
-	import { goto } from '$app/navigation';
+	// Feedback Uptake Map (#2): every teacher comment needs an answer, then Draft 2 shows the changes.
+	import HandIn from '#lib/components/HandIn.svelte';
 	import Locked from '#lib/components/Locked.svelte';
 	import StepHeader from '#lib/components/StepHeader.svelte';
-	import { assignment, type Answer } from '#lib/data.ts';
-	import { demo, type FeedbackAnswer } from '#lib/state.svelte.ts';
+	import { errorLabel, feedbackItems, sampleDrafts, steps, type ResolutionAction } from '#lib/data.ts';
+	import { demo, resolutionReady, snapshotFor, type FeedbackResolution } from '#lib/state.svelte.ts';
 
-	const OPTIONS: { value: Answer; label: string }[] = [
-		{ value: 'fixed', label: 'I fixed it' },
-		{ value: 'partly', label: 'I fixed part of it' },
-		{ value: 'kept', label: 'I kept it the same' }
+	const OPTIONS: { value: ResolutionAction; label: string }[] = [
+		{ value: 'addressed', label: 'I fixed it' },
+		{ value: 'partly_addressed', label: 'I fixed part of it' },
+		{ value: 'declined', label: 'I kept it the same' }
 	];
 
-	const paragraphs = assignment.source.paragraphs.map((_, i) => i + 1);
+	const step = steps[2];
+	const firstDraft = $derived(snapshotFor(demo, steps[1].stage));
+	const done = $derived(snapshotFor(demo, step.stage));
+	const doneCount = $derived(demo.feedback_resolutions.filter(resolutionReady).length);
+	const total = feedbackItems.length;
 
-	function complete(a: FeedbackAnswer) {
-		if (!a.status) return false;
-		if (a.status === 'kept') return a.reason.trim().length >= 10;
-		return a.paragraph !== null;
-	}
-
-	const doneCount = $derived(demo.answers.filter(complete).length);
-	const total = assignment.feedback.length;
-
-	function choose(a: FeedbackAnswer, value: Answer, defaultParagraph: number) {
-		a.status = value;
-		if (value !== 'kept' && a.paragraph === null) a.paragraph = defaultParagraph;
-	}
-
-	function finish() {
-		demo.revisedAt = Date.now();
-		goto('/student/final');
-	}
+	const choose = (r: FeedbackResolution, value: ResolutionAction) => (r.action = value);
 </script>
 
 <svelte:head><title>Step 3: Revise · MYRACLE</title></svelte:head>
 
 <StepHeader n={3} title="Answer your teacher’s comments" next="hand in your final essay" />
 
-{#if !demo.draft.at}
+{#if !firstDraft}
 	<Locked what="Hand in your first draft first." href="/student/draft" />
+{:else if done}
+	<div class="card stack handed">
+		<span class="pill pill-ok">Draft 2 handed in</span>
+		<p class="muted">You answered all {total} comments. Your answers point to Draft 2, where the changes are.</p>
+		<a class="btn btn-primary btn-block" href="/student/final">Hand in my final essay</a>
+	</div>
 {:else}
 	<div class="card stack intro">
 		<p>
-		For each comment, tell your teacher what you did. <strong>Keeping something is okay</strong> if
-		you say why. A good reason counts as much as a fix.
+			For each comment, tell your teacher what you did. <strong>Keeping something is okay</strong> if
+			you say why. A good reason counts as much as a fix.
 		</p>
 		<p class="progress small">
 			<span class="pill" class:pill-ok={doneCount === total}>{doneCount} of {total} answered</span>
 		</p>
 	</div>
 
-	{#each assignment.feedback as item, i (item.n)}
-		{@const a = demo.answers[i]}
-		<section class="card stack item" class:complete={complete(a)}>
+	{#each feedbackItems as item, i (item.id)}
+		{@const r = demo.feedback_resolutions[i]}
+		<section class="card stack item" class:complete={resolutionReady(r)}>
 			<div class="item-head">
-				<span class="num">{item.n}</span>
-				<span class="pill">{item.tag}</span>
-				<span class="small muted">¶{item.paragraph} of your draft</span>
+				<span class="num">{item.number}</span>
+				<span class="pill">{errorLabel(item.error_type_id)}</span>
+				{#if item.anchor_page}<span class="small muted">page {item.anchor_page} of your draft</span>{/if}
 			</div>
-			<blockquote>“{item.quote}”</blockquote>
-			<p class="pen">{item.comment}</p>
+			<blockquote>“{item.anchor_excerpt}”</blockquote>
+			<p class="pen">{item.body}</p>
 
-			<div class="options" role="radiogroup" aria-label="What did you do with comment {item.n}?">
+			<div class="options" role="radiogroup" aria-label="What did you do with comment {item.number}?">
 				{#each OPTIONS as o (o.value)}
-					<button
-						class="opt {o.value}"
-						role="radio"
-						aria-checked={a.status === o.value}
-						onclick={() => choose(a, o.value, item.paragraph)}>{o.label}</button
+					<button class="opt {o.value}" role="radio" aria-checked={r.action === o.value} onclick={() => choose(r, o.value)}
+						>{o.label}</button
 					>
 				{/each}
 			</div>
 
-			{#if a.status === 'fixed' || a.status === 'partly'}
-				<div class="follow stack">
-					<label class="field">
-						Where did you change it?
-						<select bind:value={a.paragraph}>
-							{#each paragraphs as p (p)}<option value={p}>Paragraph {p}</option>{/each}
-						</select>
-					</label>
-					<label class="field">
-						What did you change? <span class="muted small">(optional)</span>
-						<input type="text" bind:value={a.note} placeholder="Example: rewrote my thesis as one sentence" />
-					</label>
-				</div>
-			{:else if a.status === 'kept'}
+			{#if r.action === 'addressed' || r.action === 'partly_addressed'}
+				<label class="field follow">
+					What did you change?
+					<input type="text" bind:value={r.changed_excerpt} placeholder="Example: rewrote my position as one sentence" />
+				</label>
+			{:else if r.action === 'declined'}
 				<label class="field follow">
 					Why did you keep it?
-					<textarea rows="3" bind:value={a.reason} placeholder="Example: This sentence is a quote from someone I interviewed."></textarea>
+					<textarea rows="3" bind:value={r.decline_reason} placeholder="Example: This sentence is a quote from someone I interviewed."
+					></textarea>
 				</label>
 			{/if}
 		</section>
 	{/each}
 
-	<button class="btn btn-primary btn-block" disabled={doneCount < total} onclick={finish}>
-		Done. Hand in my final essay
-	</button>
 	{#if doneCount < total}
-		<p class="muted small center">Answer all {total} comments to continue.</p>
+		<p class="muted small center">Answer all {total} comments, then hand in Draft 2.</p>
+	{:else}
+		<h2 class="part">Now hand in Draft 2 with your changes</h2>
+		<div class="goal">
+			<p class="goal-label">Teacher’s goal for this draft</p>
+			<p>{step.goal}</p>
+		</div>
+		<HandIn {step} sampleName="Position paper – Draft 2" sampleText={sampleDrafts.revision} onsubmit={() => {}} />
 	{/if}
 {/if}
 
@@ -164,24 +151,29 @@
 	.opt:active {
 		transform: scale(0.97);
 	}
-	.opt.fixed[aria-checked='true'] {
+	.opt.addressed[aria-checked='true'] {
 		background: var(--ok-soft);
 		border-color: var(--ok);
 		color: var(--ok);
 	}
-	.opt.partly[aria-checked='true'] {
+	.opt.partly_addressed[aria-checked='true'] {
 		background: var(--gold-soft);
 		border-color: var(--partly);
 		color: #8a5d00;
 	}
-	.opt.kept[aria-checked='true'] {
+	.opt.declined[aria-checked='true'] {
 		background: #e9edf5;
 		border-color: var(--kept);
 		color: var(--ink);
 	}
 	.follow {
-		gap: 0.75rem;
 		padding-top: 0.25rem;
+	}
+	.part {
+		margin-top: 0.75rem;
+	}
+	.handed {
+		align-items: flex-start;
 	}
 	.center {
 		text-align: center;
